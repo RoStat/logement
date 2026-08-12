@@ -52,7 +52,10 @@ def discover_available_years(session: requests.Session) -> list[int]:
     resp = session.get(f"{DVF_BASE_URL}/", timeout=30)
     resp.raise_for_status()
 
-    years = sorted(set(int(m) for m in re.findall(r'href="(\d{4})/"', resp.text)))
+    years = sorted(set(
+        int(m) for m in re.findall(r'href="[^"]*?(\d{4})/?"', resp.text)
+        if 2014 <= int(m) <= 2030
+    ))
     if not years:
         raise RuntimeError(
             f"Aucune année trouvée dans le listing de {DVF_BASE_URL}. "
