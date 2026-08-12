@@ -117,14 +117,13 @@ def deduplicate_slugs(slugs: pd.Series) -> pd.Series:
     return pd.Series(result, index=slugs.index)
 
 
-EXCLUDE_KEYWORDS = [
-    "outre-mer", "outremer", "depuis_", "depuis 1", "historique",
-    "arrondissement", "canton", "intercommun", "epci",
-]
-
-
 def discover_cog_url(session: requests.Session) -> str:
-    """Interroge l'API data.gouv.fr pour trouver l'URL du fichier communes du COG le plus récent."""
+    """Interroge l'API data.gouv.fr pour trouver l'URL du fichier communes du COG le plus récent.
+
+    Cible : "liste des communes, arrondissements municipaux, communes
+    déléguées et communes associées au 01/01/YYYY" — le fichier instantané
+    principal du COG.
+    """
     logger.info("Recherche du fichier communes COG sur data.gouv.fr…")
     resp = session.get(COG_DATASET_URL, timeout=30)
     resp.raise_for_status()
@@ -138,30 +137,30 @@ def discover_cog_url(session: requests.Session) -> str:
             all_resources.append((title, url))
 
     logger.info(
-        "Ressources CSV trouvées : %s",
-        [t for t, _ in all_resources],
+        "Ressources CSV trouvées (%d) : %s",
+        len(all_resources), [t for t, _ in all_resources],
     )
 
-    def is_main_communes(title: str) -> bool:
-        if "commune" not in title:
-            return False
-        return not any(kw in title for kw in EXCLUDE_KEYWORDS)
+    def is_main_communes_snapshot(title: str) -> bool:
+        return (
+            "liste des communes" in title
+            and "au 01/01/" in title
+            and "outre-mer" not in title
+        )
 
-    candidates = [(t, u) for t, u in all_resources if is_main_communes(t)]
+    candidates = [
+        (t, u) for t, u in all_resources if is_main_communes_snapshot(t)
+    ]
 
     if not candidates:
         raise RuntimeError(
-            f"Aucun fichier communes principal trouvé dans le COG. "
+            f"Aucun fichier communes instantané trouvé dans le COG. "
             f"Toutes les ressources : {[t for t, _ in all_resources]}"
         )
 
-    for title, url in candidates:
-        if "2024" in title or "2025" in title or "2026" in title:
-            logger.info("Fichier COG retenu : %s → %s", title, url)
-            return url
-
+    candidates.sort(reverse=True)
     title, url = candidates[0]
-    logger.info("Fichier COG retenu (premier candidat) : %s → %s", title, url)
+    logger.info("Fichier COG retenu : %s → %s", title, url)
     return url
 
 
