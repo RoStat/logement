@@ -117,6 +117,12 @@ def deduplicate_slugs(slugs: pd.Series) -> pd.Series:
     return pd.Series(result, index=slugs.index)
 
 
+EXCLUDE_KEYWORDS = [
+    "outre-mer", "outremer", "depuis_", "depuis 1", "historique",
+    "arrondissement", "canton", "intercommun", "epci",
+]
+
+
 def discover_cog_url(session: requests.Session) -> str:
     """Interroge l'API data.gouv.fr pour trouver l'URL du fichier communes du COG le plus récent."""
     logger.info("Recherche du fichier communes COG sur data.gouv.fr…")
@@ -124,21 +130,33 @@ def discover_cog_url(session: requests.Session) -> str:
     resp.raise_for_status()
     dataset = resp.json()
 
-    candidates = []
+    all_resources = []
     for resource in dataset.get("resources", []):
         title = (resource.get("title") or "").lower()
         url = resource.get("url", "")
-        if "commune" in title and url.endswith((".csv", ".csv.gz", ".zip")):
-            candidates.append((title, url))
+        if url.endswith((".csv", ".csv.gz", ".zip")):
+            all_resources.append((title, url))
+
+    logger.info(
+        "Ressources CSV trouvées : %s",
+        [t for t, _ in all_resources],
+    )
+
+    def is_main_communes(title: str) -> bool:
+        if "commune" not in title:
+            return False
+        return not any(kw in title for kw in EXCLUDE_KEYWORDS)
+
+    candidates = [(t, u) for t, u in all_resources if is_main_communes(t)]
 
     if not candidates:
         raise RuntimeError(
-            f"Aucun fichier communes trouvé dans le dataset COG. "
-            f"Ressources disponibles : {[r.get('title') for r in dataset.get('resources', [])]}"
+            f"Aucun fichier communes principal trouvé dans le COG. "
+            f"Toutes les ressources : {[t for t, _ in all_resources]}"
         )
 
     for title, url in candidates:
-        if "commune" in title and ("2024" in title or "2025" in title or "2026" in title):
+        if "2024" in title or "2025" in title or "2026" in title:
             logger.info("Fichier COG retenu : %s → %s", title, url)
             return url
 
