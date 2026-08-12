@@ -3,8 +3,8 @@
 import logging
 import sys
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 
 
 def get_logger(name: str) -> logging.Logger:
