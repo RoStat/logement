@@ -30,6 +30,9 @@ python -m src.ingest.dvf --all
 # DPE — code postal (développement)
 python -m src.ingest.dpe --code-postal 69100
 
+# DPE — département entier (filtre sur le préfixe du code INSEE)
+python -m src.ingest.dpe --departement 69
+
 # DPE — France entière
 python -m src.ingest.dpe --all
 

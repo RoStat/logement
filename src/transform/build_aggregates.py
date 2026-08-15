@@ -100,7 +100,6 @@ def build(departement: str | None = None) -> None:
             CREATE TABLE communes_eligible AS
             SELECT code_insee FROM eligible
         """)
-        con.execute("CREATE TABLE eligible AS SELECT * FROM eligible")
 
     with timed_operation(logger, "Contrôles qualité"):
         run_all_checks(con)

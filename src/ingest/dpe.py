@@ -5,6 +5,7 @@ limitation de débit à 5 req/s, et reprise sur incident.
 
 Usage :
     python -m src.ingest.dpe --code-postal 69100
+    python -m src.ingest.dpe --departement 69
     python -m src.ingest.dpe --all
 """
 
@@ -51,6 +52,56 @@ COLUMN_RENAME = {
     "Coordonnée_cartographique_Y_(BAN)": "latitude",
 }
 
+# Caracteres reserves par la syntaxe query_string d'Elasticsearch, utilisee par
+# le parametre `qs` de data-fair. Les noms de champs de l'API ADEME comportent
+# des parentheses : sans echappement elles sont interpretees comme un
+# groupement et le filtre est silencieusement ignore (toute la France est
+# alors telechargee).
+QS_SPECIAL_CHARS = set(r'+-=&|><!(){}[]^"~*?:\/')
+
+FIELD_CODE_POSTAL = "Code_postal_(BAN)"
+FIELD_CODE_INSEE = "Code_INSEE_(BAN)"
+
+
+def escape_qs(value: str) -> str:
+    """Echappe les caracteres reserves de la syntaxe query_string."""
+    return "".join("\\" + c if c in QS_SPECIAL_CHARS else c for c in value)
+
+
+def build_query_params(
+    code_postal: str | None = None,
+    departement: str | None = None,
+    cursor: str | None = None,
+) -> dict[str, str | int]:
+    """Construit les parametres d'une requete de page a l'API ADEME.
+
+    Le filtre departement s'appuie sur le code INSEE et non sur le code postal :
+    le prefixe du code INSEE communal designe le departement de facon fiable
+    (69xxx = Rhone), ce qui n'est pas vrai des codes postaux, dont le prefixe
+    deborde sur les departements voisins.
+    """
+    if code_postal and departement:
+        raise ValueError(
+            "Filtres incompatibles : preciser --code-postal ou --departement, pas les deux."
+        )
+
+    params: dict[str, str | int] = {
+        "size": DPE_PAGE_SIZE,
+        "select": ",".join(SELECT_COLUMNS),
+    }
+
+    if code_postal:
+        params["qs"] = f"{escape_qs(FIELD_CODE_POSTAL)}:{escape_qs(code_postal)}"
+    elif departement:
+        # Le `*` final est volontairement laisse non echappe : c'est le joker.
+        params["qs"] = f"{escape_qs(FIELD_CODE_INSEE)}:{escape_qs(departement)}*"
+
+    if cursor:
+        params["after"] = cursor
+
+    return params
+
+
 CURSOR_FILE = DATA_DIR / "raw" / "dpe" / "_cursor.json"
 
 
@@ -82,19 +133,13 @@ def clear_cursor() -> None:
 def fetch_page(
     session: requests.Session,
     code_postal: str | None = None,
+    departement: str | None = None,
     cursor: str | None = None,
 ) -> tuple[list[dict], str | None]:
     """Récupère une page de résultats DPE. Retourne (lignes, prochain curseur)."""
-    params: dict[str, str | int] = {
-        "size": DPE_PAGE_SIZE,
-        "select": ",".join(SELECT_COLUMNS),
-    }
-
-    if code_postal:
-        params["qs"] = f"Code_postal_(BAN):{code_postal}"
-
-    if cursor:
-        params["after"] = cursor
+    params = build_query_params(
+        code_postal=code_postal, departement=departement, cursor=cursor,
+    )
 
     resp = session.get(DPE_API_URL, params=params, timeout=60)
     resp.raise_for_status()
@@ -113,7 +158,12 @@ def fetch_page(
     return rows, next_cursor
 
 
-def run_ingestion(code_postal: str | None, all_france: bool, resume: bool) -> None:
+def run_ingestion(
+    code_postal: str | None,
+    all_france: bool,
+    resume: bool,
+    departement: str | None = None,
+) -> None:
     session = requests.Session()
 
     cursor, start_page, accumulated_rows = (None, 0, 0)
@@ -124,19 +174,29 @@ def run_ingestion(code_postal: str | None, all_france: bool, resume: bool) -> No
     page = start_page
     min_interval = 1.0 / DPE_RATE_LIMIT
 
-    filter_label = f"code postal {code_postal}" if code_postal else "France entière"
+    if code_postal:
+        filter_label = f"code postal {code_postal}"
+    elif departement:
+        filter_label = f"département {departement}"
+    else:
+        filter_label = "France entière"
     logger.info("Ingestion DPE : %s (page de départ : %d)", filter_label, page)
 
-    if not all_france and not code_postal:
+    if not all_france and not code_postal and not departement:
         raise RuntimeError(
-            "Préciser --code-postal ou --all. "
+            "Préciser --code-postal, --departement ou --all. "
             "Ne jamais lancer un téléchargement complet par accident."
         )
 
     with timed_operation(logger, f"Ingestion DPE {filter_label}"):
         while True:
             t0 = time.monotonic()
-            rows, next_cursor = fetch_page(session, code_postal=code_postal, cursor=cursor)
+            rows, next_cursor = fetch_page(
+                session,
+                code_postal=code_postal,
+                departement=departement,
+                cursor=cursor,
+            )
             page += 1
 
             if not rows:
@@ -181,7 +241,7 @@ def run_ingestion(code_postal: str | None, all_france: bool, resume: bool) -> No
     for col in ["annee_construction"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
 
-    suffix = code_postal or "full"
+    suffix = code_postal or (f"dep{departement}" if departement else "full")
     out_path = PARQUET_DIR / "dpe" / f"dpe_{suffix}.parquet"
     write_parquet(df, out_path)
     clear_cursor()
@@ -199,10 +259,15 @@ def run_ingestion(code_postal: str | None, all_france: bool, resume: bool) -> No
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ingestion DPE logements existants (ADEME)")
-    parser.add_argument(
+    perimetre = parser.add_mutually_exclusive_group(required=True)
+    perimetre.add_argument(
         "--code-postal", type=str, default=None, help="Code postal (dev)",
     )
-    parser.add_argument(
+    perimetre.add_argument(
+        "--departement", type=str, default=None,
+        help="Département, filtré sur le préfixe du code INSEE (ex: 69)",
+    )
+    perimetre.add_argument(
         "--all", action="store_true", help="Télécharger tous les DPE",
     )
     parser.add_argument(
@@ -212,6 +277,7 @@ def main() -> None:
 
     run_ingestion(
         code_postal=args.code_postal,
+        departement=args.departement,
         all_france=args.all,
         resume=args.resume,
     )
