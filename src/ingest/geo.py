@@ -103,18 +103,36 @@ def slugify(text: str) -> str:
     return text
 
 
-def deduplicate_slugs(slugs: pd.Series) -> pd.Series:
-    """Ajoute un suffixe numérique aux slugs en double."""
-    seen: dict[str, int] = {}
-    result = []
-    for s in slugs:
-        if s in seen:
-            seen[s] += 1
-            result.append(f"{s}-{seen[s]}")
-        else:
-            seen[s] = 0
-            result.append(s)
-    return pd.Series(result, index=slugs.index)
+def deduplicate_slugs(
+    slugs: pd.Series,
+    departements: pd.Series,
+    codes_insee: pd.Series,
+) -> pd.Series:
+    """Rend les slugs uniques en les qualifiant par département.
+
+    Un suffixe numérique attribué au fil de la lecture dépendrait de l'ordre des
+    lignes : une mise à jour du COG pourrait alors échanger les URL de deux
+    communes homonymes, cassant leur référencement. Le département est stable et
+    porte du sens dans une URL — « saint-priest-69 » se lit, « saint-priest-2 »
+    ne dit rien.
+
+    Les rares homonymes d'un même département sont départagés par le code INSEE,
+    qui est unique par construction.
+    """
+    occurrences = slugs.value_counts()
+
+    qualifies = [
+        slug if occurrences[slug] == 1 else f"{slug}-{dep}".lower()
+        for slug, dep in zip(slugs, departements, strict=True)
+    ]
+
+    restants = pd.Series(qualifies).value_counts()
+    resultat = [
+        qualifie if restants[qualifie] == 1 else f"{qualifie}-{code}".lower()
+        for qualifie, code in zip(qualifies, codes_insee, strict=True)
+    ]
+
+    return pd.Series(resultat, index=slugs.index)
 
 
 def discover_cog_url(session: requests.Session) -> str:
@@ -221,7 +239,11 @@ def build_communes(cog_df: pd.DataFrame) -> pd.DataFrame:
     result["nom_departement"] = result["code_departement"].map(DEPARTEMENTS).fillna("")
     result["nom_region"] = result["code_region"].map(REGIONS).fillna("")
 
-    result["slug"] = deduplicate_slugs(result["nom"].apply(slugify))
+    result["slug"] = deduplicate_slugs(
+        result["nom"].apply(slugify),
+        result["code_departement"],
+        result["code_insee"],
+    )
 
     result["codes_postaux"] = ""
     result["population"] = None

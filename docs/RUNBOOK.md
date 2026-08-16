@@ -42,6 +42,9 @@ python -m src.ingest.dpe --all
 # Référentiel géographique
 python -m src.ingest.geo
 
+# Déploiement de la fibre (ARCEP) — produit aussi les contours de la carte
+python -m src.ingest.fibre --departement 69
+
 # Table de rattachement des communes fusionnées
 python -m src.ingest.communes_historiques --departement 69
 
@@ -53,6 +56,9 @@ python -m src.ingest.aides
 
 ```bash
 python -m src.transform.build_aggregates
+
+# Export du JSON embarqué dans la page
+python -m src.transform.export_web --departement 69
 ```
 
 ## Relancer une ingestion après échec

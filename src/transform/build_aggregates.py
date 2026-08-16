@@ -131,6 +131,12 @@ def build(departement: str | None = None) -> None:
         n = con.execute("SELECT COUNT(*) FROM agg_commune_immo").fetchone()[0]
         logger.info("  agg_commune_immo : %d lignes", n)
 
+    with timed_operation(logger, "Agrégats de prix toutes catégories"):
+        sql = (SQL_DIR / "agg_commune_prix.sql").read_text()
+        con.execute(f"CREATE TABLE agg_commune_prix AS {sql}")
+        n = con.execute("SELECT COUNT(*) FROM agg_commune_prix").fetchone()[0]
+        logger.info("  agg_commune_prix : %d lignes", n)
+
     with timed_operation(logger, "Agrégats DPE communaux"):
         sql = (SQL_DIR / "agg_commune_dpe.sql").read_text()
         con.execute(f"CREATE TABLE agg_commune_dpe AS {sql}")
@@ -177,7 +183,7 @@ def build(departement: str | None = None) -> None:
         sqlite_con = sqlite3.connect(str(DB_PATH))
 
         for table in [
-            "communes", "agg_commune_immo", "agg_commune_dpe",
+            "communes", "agg_commune_immo", "agg_commune_prix", "agg_commune_dpe",
         ]:
             df = con.execute(f"SELECT * FROM {table}").fetchdf()
             df.to_sql(table, sqlite_con, if_exists="replace", index=False)

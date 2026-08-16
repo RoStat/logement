@@ -202,3 +202,62 @@ en maisons et plus pauvres en ventes multi-lots, retiendront davantage.
 **Bilan désormais vérifié en deux temps**, le regroupement faisant changer
 l'unité de compte en cours de traitement : un bilan en lignes jusqu'au
 regroupement, un bilan en mutations ensuite.
+
+## 2026-08-16 — Slugs qualifiés par département
+
+**Constat** : la déduplication ajoutait un suffixe numérique attribué au fil de
+la lecture du COG. Saint-Priest du Rhône portait ainsi `saint-priest-2`, parce
+qu'une commune homonyme figurait plus haut dans le fichier. Le suffixe dépendait
+donc de l'ordre des lignes : une mise à jour du COG pouvait échanger les URL de
+deux homonymes et casser leur référencement.
+
+**Choix** : qualifier par le code de département — `saint-priest-69`. Stable,
+lisible dans une URL, et porteur de sens. Les rares homonymes d'un même
+département sont départagés par le code INSEE, unique par construction.
+29 communes du Rhône sont concernées.
+
+## 2026-08-16 — Millésime affiché : le dernier disponible par commune
+
+**Constat** : l'export figeait l'année 2024 alors que 2025 est complet dans DVF
+(dernière mutation au 31 décembre) et compte davantage de ventes — 19 772 contre
+17 063. Les prix affichés avaient donc un an de retard sans raison.
+
+**Choix** : retenir pour chaque commune son dernier millésime disponible, et
+l'afficher explicitement à côté du prix. Sur le Rhône, les communes se
+répartissent entre 2024 et 2025 selon qu'elles ont enregistré des ventes en 2025.
+
+## 2026-08-16 — Fibre optique : shapefile ARCEP
+
+**Source** : jeu « Le marché du haut et très haut débit fixe (déploiements) »,
+ressource communale trimestrielle. Millésime ingéré : 2026T1.
+
+**Le champ `couv` du fichier n'est pas un taux** : il ne prend que trois valeurs
+sur le Rhône (50, 80, 95). C'est un palier réglementaire. Le taux est donc
+recalculé à partir de `ftth / Locaux`.
+
+**Les contours de la carte viennent du même fichier**, et non de
+`geo.api.gouv.fr` : cette API agrège Lyon en une commune unique, là où le parc et
+le prix au m² diffèrent fortement d'un arrondissement à l'autre. Une seule
+source, une granularité cohérente avec les agrégats.
+
+Mesure sur le Rhône : 96,8 % des locaux raccordables, médiane communale à 97,7 %,
+minimum à 71 % (Cenves). La fibre discrimine donc peu dans ce département.
+
+## 2026-08-16 — Couleurs de la carte
+
+**Trois rampes séquentielles monochromes**, une par mesure, vérifiées monotones
+en luminance : violet pour le prix, ambre pour le DPE, sarcelle pour la fibre.
+L'ancrage s'inverse en thème sombre pour que la valeur faible reste proche du
+fond.
+
+**Les couleurs réglementaires DPE ne sont pas employées sur la carte.** Elles
+restent sur la barre de répartition communale, où elles désignent de vraies
+classes. Les utiliser pour une *moyenne calculée* laisserait croire à un
+classement officiel qui n'existe pas, et un dégradé arc-en-ciel ne se lit pas
+comme une magnitude ordonnée.
+
+**Seuils par quantiles et non par paliers réguliers** : la distribution des prix
+est très asymétrique — 775 à 5 450 €/m² — et des paliers réguliers écraseraient
+tout le département sur une seule teinte. Les bornes affichées en légende sont
+l'étendue réelle des données, non le premier et le dernier seuil : sur la fibre,
+ces derniers masquaient le minimum à 71 %.
