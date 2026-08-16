@@ -1,15 +1,15 @@
--- Croisement prix immobilier / classe DPE par commune.
--- Nécessite un rapprochement préalable DVF↔DPE par géocodage.
+-- Croisement prix immobilier / étiquette DPE, par commune et type de bien.
+-- Alimenté par le rapprochement d'adresses (src/transform/rapprochement.py),
+-- qui porte déjà l'étiquette : aucune jointure supplémentaire n'est nécessaire.
 SELECT
-    dvf.code_commune AS code_insee,
-    dvf.type_local,
-    dpe.classe_dpe,
+    code_commune AS code_insee,
+    type_local,
+    classe_dpe,
     COUNT(*) AS nb_observations,
     CAST(MEDIAN(
-        CAST(dvf.valeur_fonciere AS DOUBLE) / CAST(dvf.surface_reelle_bati AS DOUBLE)
+        CAST(valeur_fonciere AS DOUBLE) / CAST(surface_reelle_bati AS DOUBLE)
     ) AS INTEGER) AS prix_m2_median
-FROM dvf_dpe_matched AS dvf
-JOIN dpe ON dvf.dpe_numero = dpe.numero_dpe
-WHERE dvf.surface_reelle_bati > 0
-    AND dpe.classe_dpe IN ('A', 'B', 'C', 'D', 'E', 'F', 'G')
-GROUP BY dvf.code_commune, dvf.type_local, dpe.classe_dpe
+FROM dvf_dpe_matched
+WHERE surface_reelle_bati > 0
+    AND classe_dpe IN ('A', 'B', 'C', 'D', 'E', 'F', 'G')
+GROUP BY code_commune, type_local, classe_dpe

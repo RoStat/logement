@@ -22,6 +22,7 @@ def _create_all(root: Path) -> None:
     (root / "dpe" / "dpe_dep69.parquet").touch()
     (root / "communes.parquet").touch()
     (root / "communes_historiques.parquet").touch()
+    (root / "dvf_dpe.parquet").touch()
 
 
 class TestCheckInputs:
@@ -69,7 +70,12 @@ class TestCheckInputs:
 
     def test_chaque_entree_a_une_commande(self) -> None:
         for motif, commande in REQUIRED_INPUTS:
-            assert motif and commande.startswith("python -m src.ingest.")
+            assert motif
+            assert commande.startswith("python -m src.")
+
+    def test_rapprochement_est_une_entree_requise(self) -> None:
+        """Sans lui, agg_voie_immo et agg_commune_croisement restent vides."""
+        assert "dvf_dpe.parquet" in [motif for motif, _ in REQUIRED_INPUTS]
 
 
 class TestRattachementRequis:

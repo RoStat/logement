@@ -37,6 +37,7 @@ REQUIRED_INPUTS = (
         "communes_historiques.parquet",
         "python -m src.ingest.communes_historiques --departement 69",
     ),
+    ("dvf_dpe.parquet", "python -m src.transform.rapprochement --departement 69"),
 )
 
 
@@ -131,6 +132,35 @@ def build(departement: str | None = None) -> None:
         n = con.execute("SELECT COUNT(*) FROM agg_commune_immo").fetchone()[0]
         logger.info("  agg_commune_immo : %d lignes", n)
 
+    with timed_operation(logger, "Tables dérivées du géocodage"):
+        # id_voie concatène le code commune et le code FANTOIR : c'est la clé de
+        # la longue traîne, une même voie pouvant porter des dizaines de ventes.
+        con.execute("""
+            CREATE TABLE dvf_geocoded AS
+            SELECT *, code_commune || adresse_code_voie AS id_voie
+            FROM dvf
+            WHERE latitude IS NOT NULL AND adresse_code_voie IS NOT NULL
+        """)
+        n = con.execute("SELECT COUNT(*) FROM dvf_geocoded").fetchone()[0]
+        logger.info("  dvf_geocoded : %d lignes", n)
+
+        matched_path = str(PARQUET_DIR / "dvf_dpe.parquet")
+        con.execute(f"CREATE TABLE dvf_dpe_matched AS SELECT * FROM '{matched_path}'")
+        n = con.execute("SELECT COUNT(*) FROM dvf_dpe_matched").fetchone()[0]
+        logger.info("  dvf_dpe_matched : %d lignes", n)
+
+    with timed_operation(logger, "Agrégats par voie"):
+        sql = (SQL_DIR / "agg_voie_immo.sql").read_text()
+        con.execute(f"CREATE TABLE agg_voie_immo AS {sql}")
+        n = con.execute("SELECT COUNT(*) FROM agg_voie_immo").fetchone()[0]
+        logger.info("  agg_voie_immo : %d lignes", n)
+
+    with timed_operation(logger, "Croisement prix / étiquette DPE"):
+        sql = (SQL_DIR / "agg_commune_croisement.sql").read_text()
+        con.execute(f"CREATE TABLE agg_commune_croisement AS {sql}")
+        n = con.execute("SELECT COUNT(*) FROM agg_commune_croisement").fetchone()[0]
+        logger.info("  agg_commune_croisement : %d lignes", n)
+
     with timed_operation(logger, "Agrégats de prix toutes catégories"):
         sql = (SQL_DIR / "agg_commune_prix.sql").read_text()
         con.execute(f"CREATE TABLE agg_commune_prix AS {sql}")
@@ -184,6 +214,7 @@ def build(departement: str | None = None) -> None:
 
         for table in [
             "communes", "agg_commune_immo", "agg_commune_prix", "agg_commune_dpe",
+            "agg_voie_immo", "agg_commune_croisement",
         ]:
             df = con.execute(f"SELECT * FROM {table}").fetchdf()
             df.to_sql(table, sqlite_con, if_exists="replace", index=False)

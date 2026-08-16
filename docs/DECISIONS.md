@@ -261,3 +261,51 @@ est très asymétrique — 775 à 5 450 €/m² — et des paliers réguliers é
 tout le département sur une seule teinte. Les bornes affichées en légende sont
 l'étendue réelle des données, non le premier et le dernier seuil : sur la fibre,
 ces derniers masquaient le minimum à 71 %.
+
+## 2026-08-16 — Rapprochement DVF ↔ DPE par adresse
+
+**Contrainte** : aucun identifiant commun. DVF ne porte pas d'identifiant BAN,
+seulement un couple latitude/longitude et une adresse en majuscules abrégées.
+L'ADEME expose un `identifiant_ban`, un `geopoint` et une adresse en casse mixte.
+
+**Méthode** : normalisation des libellés de voie — majuscules, accents retirés,
+abréviations résolues, articles supprimés — puis clé « commune | numéro | voie ».
+Une clé souple, sans le type de voie, rattrape les cas où les deux sources
+divergent entre « rue » et « cours » ; elle n'est tentée que sur les ventes non
+appariées et reste soumise aux mêmes vérifications.
+
+**Garde-fous**, parce qu'un faux appariement attribue un prix à la mauvaise
+étiquette — soit une donnée fausse plutôt qu'absente :
+- distance entre les deux points inférieure à 150 m ;
+- écart de surface inférieur à 20 % entre le bien vendu et le diagnostic ;
+- diagnostics au score de géocodage BAN inférieur à 0,4 écartés d'emblée ;
+- une vente ne peut produire qu'une ligne, celle dont la surface colle le mieux.
+
+**Résultat sur le Rhône** : 68 188 ventes appariées sur 102 801 géolocalisées,
+soit 66,3 %. Distance médiane 23 m, écart de surface médian 1,1 % — ce dernier
+chiffre est le meilleur indicateur de qualité disponible : des appariements
+hasardeux tutoieraient la tolérance de 20 %.
+
+Débloque `agg_voie_immo` (12 362 voies) et `agg_commune_croisement` (1 874
+lignes), tous deux à l'état de code mort depuis le lot 5.
+
+## 2026-08-16 — Le croisement prix / DPE doit se lire à commune constante
+
+**Constat** : agrégé sur tout le département, le croisement donne un résultat
+absurde — les logements classés G ressortent 4,1 % **au-dessus** des D. La
+localisation écrase l'effet énergétique : les G sont massivement des immeubles
+anciens d'hypercentre lyonnais.
+
+**À commune constante**, l'ordre se rétablit, référence classe D :
+
+| A | B | C | D | E | F | G |
+|---|---|---|---|---|---|---|
+| +26,7 % | +21,2 % | +17,4 % | 0 % | −3,7 % | −4,3 % | +0,6 % |
+
+**Réserve à porter partout où ce chiffre est affiché** : c'est une corrélation
+observée, pas un effet causal mesuré. L'écart entre C et D (+17,4 %) recouvre
+largement un effet de période de construction — le neuf est classé C ou mieux et
+se vend plus cher au m² pour d'autres raisons. Le champ `periode_construction`
+du jeu DPE permettrait de contrôler ce facteur ; ce n'est pas fait à ce stade.
+
+Le G, avec 881 observations sur 29 communes, reste trop peu fourni pour conclure.

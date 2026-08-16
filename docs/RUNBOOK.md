@@ -55,6 +55,9 @@ python -m src.ingest.aides
 ## Transformation
 
 ```bash
+# Rapprochement DVF ↔ DPE par adresse (préalable aux agrégats)
+python -m src.transform.rapprochement --departement 69
+
 python -m src.transform.build_aggregates
 
 # Export du JSON embarqué dans la page
