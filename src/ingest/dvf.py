@@ -16,7 +16,7 @@ import re
 import pandas as pd
 import requests
 
-from src.common.config import DVF_BASE_URL, PARQUET_DIR
+from src.common.config import DVF_BASE_URL, PARQUET_DIR, PRIX_M2_MAX, PRIX_M2_MIN
 from src.common.logging import get_logger, timed_operation
 from src.common.storage import write_parquet
 
@@ -140,6 +140,7 @@ EXCLUSION_KEYS = (
     "exclues_type_local",
     "exclues_prix_manquant",
     "exclues_surface_faible",
+    "exclues_prix_m2_aberrant",
     "exclues_multi_lots",
 )
 
@@ -173,7 +174,15 @@ def filter_dvf(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
     mask_prix = df["valeur_fonciere"].notna() & (df["valeur_fonciere"] > 0)
     mask_surface = df["surface_reelle_bati"] > 9
 
-    df_filtered = df[mask_vente & mask_type & mask_prix & mask_surface].copy()
+    # Cessions à valeur symbolique (1 €, donations, ventes entre proches) :
+    # elles passent mask_prix, qui n'écarte que les valeurs nulles ou négatives,
+    # et suffisent à faire échouer le contrôle qualité sur la médiane communale.
+    prix_m2 = df["valeur_fonciere"] / df["surface_reelle_bati"]
+    mask_prix_m2 = prix_m2.between(PRIX_M2_MIN, PRIX_M2_MAX)
+
+    df_filtered = df[
+        mask_vente & mask_type & mask_prix & mask_surface & mask_prix_m2
+    ].copy()
 
     multi_lots = (
         df_filtered.groupby("id_mutation")["id_parcelle"]
@@ -203,6 +212,10 @@ def filter_dvf(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
         "exclues_surface_faible": int(
             (mask_vente & mask_type & mask_prix).sum()
             - (mask_vente & mask_type & mask_prix & mask_surface).sum()
+        ),
+        "exclues_prix_m2_aberrant": int(
+            (mask_vente & mask_type & mask_prix & mask_surface).sum()
+            - (mask_vente & mask_type & mask_prix & mask_surface & mask_prix_m2).sum()
         ),
         "exclues_multi_lots": n_lignes_multi,
         "lignes_retenues": n_retained,

@@ -2,6 +2,7 @@
 
 import duckdb
 
+from src.common.config import PRIX_M2_MAX, PRIX_M2_MIN
 from src.common.logging import get_logger
 
 logger = get_logger("transform.quality")
@@ -17,15 +18,18 @@ def run_all_checks(con: duckdb.DuckDBPyConnection) -> None:
 
 
 def _check_prix_m2_bounds(con: duckdb.DuckDBPyConnection) -> None:
-    result = con.execute("""
+    result = con.execute(
+        """
         SELECT code_insee, annee, type_local, prix_m2_median
         FROM agg_commune_immo
-        WHERE prix_m2_median < 100 OR prix_m2_median > 40000
-    """).fetchall()
+        WHERE prix_m2_median < ? OR prix_m2_median > ?
+        """,
+        [PRIX_M2_MIN, PRIX_M2_MAX],
+    ).fetchall()
     if result:
         samples = result[:10]
         raise RuntimeError(
-            f"prix_m2_median hors bornes [100, 40000] : "
+            f"prix_m2_median hors bornes [{PRIX_M2_MIN}, {PRIX_M2_MAX}] : "
             f"{len(result)} lignes. Exemples : {samples}"
         )
     logger.info("  prix_m2_median : bornes OK")

@@ -25,6 +25,12 @@ BAN_DATA_URL = "https://adresse.data.gouv.fr/data/ban"
 DPE_RATE_LIMIT = 5
 DPE_PAGE_SIZE = 10000
 
+# Bornes de plausibilité du prix au m². Partagées entre le filtre d'ingestion
+# DVF et le contrôle qualité : les faire diverger rouvrirait la porte à un
+# build qui échoue sur des lignes que l'ingestion aurait dû écarter.
+PRIX_M2_MIN = 100
+PRIX_M2_MAX = 40000
+
 COVERAGE_MIN_VENTES = 15
 COVERAGE_MIN_DPE = 10
 

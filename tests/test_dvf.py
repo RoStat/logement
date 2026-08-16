@@ -3,6 +3,7 @@
 import pandas as pd
 import pytest
 
+from src.common.config import PRIX_M2_MAX, PRIX_M2_MIN
 from src.ingest.dvf import (
     EXCLUSION_KEYS,
     RETENTION_MAX_PCT,
@@ -180,10 +181,65 @@ class TestBilanDesFiltres:
 
     def test_assertion_declenchee_sur_compteur_faux(self) -> None:
         """Un filtre non instrumenté doit faire échouer le bilan."""
-        stats = {
+        stats = dict.fromkeys(EXCLUSION_KEYS, 0)
+        stats.update({
             "lignes_brutes": 10, "exclues_non_vente": 1, "exclues_type_local": 1,
-            "exclues_prix_manquant": 0, "exclues_surface_faible": 0,
             "exclues_multi_lots": 1, "lignes_retenues": 5,
-        }
+        })
         with pytest.raises(RuntimeError, match="pas instrumenté"):
             check_balance(stats)
+
+
+class TestPrixM2Aberrant:
+    def test_vente_symbolique_exclue(self) -> None:
+        """Une cession à 1 € passe mask_prix (valeur > 0) mais doit être écartée."""
+        rows = [
+            _make_dvf_row(id_mutation="M1", id_parcelle="P1", valeur_fonciere="1"),
+            _make_dvf_row(id_mutation="M2", id_parcelle="P2", valeur_fonciere="250000"),
+        ]
+        result, stats = filter_dvf(pd.DataFrame(rows))
+
+        assert stats["exclues_prix_m2_aberrant"] == 1
+        assert stats["exclues_prix_manquant"] == 0, "1 € n'est pas un prix manquant"
+        assert stats["lignes_retenues"] == 1
+        assert "M2" in result["id_mutation"].values
+
+    def test_prix_au_m2_excessif_exclu(self) -> None:
+        rows = [
+            _make_dvf_row(
+                id_mutation="M1", id_parcelle="P1",
+                valeur_fonciere="50000000", surface_reelle_bati="20",
+            ),
+            _make_dvf_row(id_mutation="M2", id_parcelle="P2"),
+        ]
+        _, stats = filter_dvf(pd.DataFrame(rows))
+        assert stats["exclues_prix_m2_aberrant"] == 1
+
+    @pytest.mark.parametrize("valeur", ["6500", "3200000"])
+    def test_bornes_incluses(self, valeur: str) -> None:
+        """80 m² : 6 500 € → 81 €/m² exclu ; 3 200 000 € → 40 000 €/m² conservé."""
+        rows = [_make_dvf_row(valeur_fonciere=valeur, surface_reelle_bati="80")]
+        _, stats = filter_dvf(pd.DataFrame(rows))
+        prix_m2 = float(valeur) / 80
+        attendu = 0 if PRIX_M2_MIN <= prix_m2 <= PRIX_M2_MAX else 1
+        assert stats["exclues_prix_m2_aberrant"] == attendu
+
+    def test_bilan_reste_equilibre(self) -> None:
+        """Le nouveau filtre doit rester instrumenté."""
+        rows = [
+            _make_dvf_row(id_mutation="M1", id_parcelle="P1", valeur_fonciere="1"),
+            _make_dvf_row(id_mutation="M2", id_parcelle="P2", nature_mutation="Echange"),
+            _make_dvf_row(id_mutation="M3", id_parcelle="P3"),
+            _make_dvf_row(id_mutation="M4", id_parcelle="P4", surface_reelle_bati="5"),
+        ]
+        _, stats = filter_dvf(pd.DataFrame(rows))
+        total = sum(stats[k] for k in EXCLUSION_KEYS) + stats["lignes_retenues"]
+        assert total == stats["lignes_brutes"] == len(rows)
+
+    def test_bornes_partagees_avec_le_controle_qualite(self) -> None:
+        """Filtre d'ingestion et contrôle qualité doivent lire la même source :
+        les faire diverger rouvrirait la porte à un build qui échoue."""
+        from src.transform import quality_checks
+
+        assert quality_checks.PRIX_M2_MIN is PRIX_M2_MIN
+        assert quality_checks.PRIX_M2_MAX is PRIX_M2_MAX

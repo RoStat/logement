@@ -60,20 +60,27 @@ faute de champ département supposé disponible.
 filtre porte désormais sur ce champ, en égalité stricte. Le bricolage de préfixe
 et le cas particulier corse sont supprimés.
 
-## 2026-08-15 — Fragilité des contrôles qualité face aux valeurs aberrantes
+## 2026-08-15 — Fragilité des contrôles qualité face aux valeurs aberrantes *(tranchée le 2026-08-16)*
 
-**Constat** : le contrôle `prix_m2_median ∈ [100, 40000]` est bloquant. Vérifié
-sur jeu de données synthétique : 4 lignes aberrantes sur 1330 (0,3 %) suffisent à
-faire échouer l'intégralité du build.
+**Constat** : le contrôle `prix_m2_median` est bloquant. Vérifié sur jeu
+synthétique : 4 lignes aberrantes sur 1 330 (0,3 %) suffisaient à faire échouer
+l'intégralité du build. Les cessions à valeur symbolique (1 €, donations, ventes
+entre proches) sont fréquentes dans le DVF réel et passaient le filtre, qui
+n'écartait que `valeur_fonciere <= 0`.
 
-**Risque** : les cessions à valeur symbolique (1 €, donations, ventes entre
-proches) sont fréquentes dans le DVF réel et passent le filtre actuel, qui
-n'exclut que `valeur_fonciere <= 0`.
+**Choix** : écarter les prix au m² implausibles dès l'ingestion, via
+`mask_prix_m2` et le compteur `exclues_prix_m2_aberrant`. Les contrôles qualité
+restent bloquants — ils redeviennent un filet de sécurité plutôt qu'un point de
+rupture attendu.
 
-**Décision reportée** : arbitrage attendu au STOP-1. Deux pistes — écarter les
-prix au m² implausibles dès l'ingestion (préserve le caractère bloquant du
-contrôle, mais modifie le taux de rétention, qui est un critère de validation),
-ou rendre le contrôle non bloquant au profit d'un rapport d'anomalies.
+**Bornes partagées** : `PRIX_M2_MIN` et `PRIX_M2_MAX` sont définies dans
+`config.py` et lues à la fois par le filtre d'ingestion et par le contrôle
+qualité. Les laisser diverger rouvrirait exactement la faille corrigée ; un test
+vérifie qu'il s'agit bien de la même source.
+
+**Effet mesuré** : sur jeu synthétique comportant 3 % de cessions symboliques,
+10 lignes sur 266 sont écartées et le build passe. L'impact réel sur le taux de
+rétention du 69 sera rapporté à la première ingestion réelle.
 
 ## 2026-08-16 — Migration vers le jeu `dpe03existant`
 
