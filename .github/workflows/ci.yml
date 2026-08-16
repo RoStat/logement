@@ -33,3 +33,7 @@ jobs:
 
       - name: Tests
         run: pytest -q
+
+      - name: Fiche des aides
+        # Sans réseau : structure et absence de montants uniquement.
+        run: python -m src.ingest.aides

@@ -1,6 +1,8 @@
 """Lot 9 — Chargement des agrégats dans Postgres (Supabase).
 
-Lit la base SQLite produite par la transformation et la déverse dans Supabase.
+Lit la base SQLite produite par la transformation et la déverse dans Supabase,
+dans le schéma `logement` — le projet héberge une autre application dans
+`public`, et l'isolation évite toute collision de noms.
 Le chargement est idempotent : chaque table est vidée puis réécrite dans une
 transaction unique, de sorte qu'un échec en cours de route laisse la base dans
 son état précédent plutôt qu'à moitié remplie.
@@ -26,6 +28,10 @@ from src.common.config import DB_PATH, PARQUET_DIR
 from src.common.logging import get_logger, timed_operation
 
 logger = get_logger("transform.load_supabase")
+
+# Les tables vivent dans leur propre schéma : le projet Supabase héberge une
+# seconde application dans `public`, et l'isolation évite toute collision.
+SCHEMA = "logement"
 
 # Ordre imposé par les clés étrangères : les communes d'abord.
 TABLES = [
@@ -101,7 +107,7 @@ def generer_sql(tables: dict[str, pd.DataFrame]) -> list[str]:
 
     # Suppression en ordre inverse des dépendances.
     for nom in reversed(TABLES):
-        instructions.append(f"DELETE FROM {nom};")
+        instructions.append(f"DELETE FROM {SCHEMA}.{nom};")
 
     for nom in TABLES:
         df = tables[nom]
@@ -114,7 +120,9 @@ def generer_sql(tables: dict[str, pd.DataFrame]) -> list[str]:
                 "(" + ", ".join(litteral(v) for v in ligne) + ")"
                 for ligne in tranche.itertuples(index=False, name=None)
             )
-            instructions.append(f"INSERT INTO {nom} ({colonnes}) VALUES\n{valeurs};")
+            instructions.append(
+                f"INSERT INTO {SCHEMA}.{nom} ({colonnes}) VALUES\n{valeurs};"
+            )
 
     instructions.append("COMMIT;")
     return instructions

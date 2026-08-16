@@ -383,3 +383,41 @@ opaque.
 `pyshp` et `shapely` sont passées en dépendances principales : `fibre.py` en
 dépend et fait partie de la chaîne standard. Les laisser en extra aurait produit
 une CI verte en local et rouge en intégration.
+
+## 2026-08-16 — Schéma Supabase dédié
+
+Le projet héberge une seconde application dans `public` (`capsules`, `profiles`,
+`taches`…). Les sept tables du logement sont déplacées dans un schéma
+`logement` : pas de collision de noms possible, et la propriété de chaque table
+devient explicite.
+
+`alter role authenticator set pgrst.db_schemas` est réservé aux
+superutilisateurs : **l'exposition du schéma à l'API se règle dans le tableau de
+bord** (Settings > API > Exposed schemas). Tant que `logement` n'y figure pas,
+les tables existent mais restent invisibles depuis le site.
+
+## 2026-08-16 — Aides : des dispositifs, pas des montants
+
+**Constat sur les sources.** Il n'existe pas de jeu de données ouvert national
+décrivant les aides. L'API Aides-territoires renvoie 401 sans jeton, data.gouv.fr
+ne propose que des jeux locaux, et l'ANAH publie ses barèmes en pages web.
+
+**Choix** : une fiche de référence versionnée dans le dépôt,
+`reference/aides_nationales.json`, dont les modifications se relisent en diff.
+Cinq dispositifs nationaux, chacun avec son public, ses conditions et sa source
+officielle.
+
+**Aucun montant n'y figure, et le script le vérifie.** L'éligibilité et les
+sommes dépendent des revenus du foyer, de sa composition, des travaux, de l'âge
+du logement et du statut d'occupation — rien de tout cela n'est connu du site.
+Les barèmes changent par ailleurs par décret : un chiffre périmé induirait
+l'utilisateur en erreur sur son budget, sur un sujet financier. Une expression
+régulière rejette tout montant en euros ou pourcentage chiffré, et un test
+verrouille l'invariant. Le simulateur officiel est cité à la place.
+
+**Liens vérifiés** : les six URL citées répondent 200 et sont recontrôlées à
+chaque passage du workflow de données. Deux sources écartées faute de pouvoir
+les vérifier — `france-renov.gouv.fr` échoue au handshake TLS depuis
+l'environnement d'intégration, `economie.gouv.fr` renvoie 403 aux clients non
+navigateurs. Les fiches Service-Public.fr, stables et vérifiables, leur sont
+préférées.

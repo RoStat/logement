@@ -1,0 +1,93 @@
+{
+  "millesime": "2026-08",
+  "avertissement": "Aucun montant n'est indiqué : l'éligibilité et les sommes dépendent des revenus du foyer, de sa composition, des travaux envisagés, de l'âge du logement et du statut d'occupation. Ces informations ne sont pas connues du site, et les barèmes changent par décret. Seul le simulateur officiel fait foi.",
+  "simulateur": {
+    "nom": "Mes Aides Réno",
+    "editeur": "France Rénov' / Agence nationale de l'habitat",
+    "url": "https://mesaidesreno.beta.gouv.fr/"
+  },
+  "dispositifs": [
+    {
+      "id": "cheque-energie",
+      "nom": "Chèque énergie",
+      "resume": "Aide au paiement des factures d'énergie du logement, ou de travaux de rénovation. Envoyée automatiquement aux foyers éligibles, sans démarche.",
+      "pour_qui": ["locataire", "proprietaire_occupant"],
+      "conditions": [
+        "Attribution selon le revenu fiscal de référence et la composition du foyer",
+        "Logement déclaré comme résidence principale",
+        "Utilisable auprès du fournisseur d'énergie ou pour régler des travaux"
+      ],
+      "source": {
+        "nom": "Chèque énergie — portail officiel",
+        "url": "https://chequeenergie.gouv.fr/"
+      },
+      "verifie_le": "2026-08-16"
+    },
+    {
+      "id": "maprimerenov",
+      "nom": "MaPrimeRénov'",
+      "resume": "Aide de l'État aux travaux de rénovation énergétique : isolation, chauffage, ventilation, ou rénovation d'ampleur.",
+      "pour_qui": ["proprietaire_occupant", "proprietaire_bailleur"],
+      "conditions": [
+        "Montant modulé selon les revenus du foyer et les travaux réalisés",
+        "Logement achevé depuis un nombre d'années minimum fixé par la réglementation",
+        "Travaux réalisés par une entreprise reconnue garante de l'environnement",
+        "Demande à déposer avant le début des travaux"
+      ],
+      "source": {
+        "nom": "Service-Public.fr — fiche F35083",
+        "url": "https://www.service-public.fr/particuliers/vosdroits/F35083"
+      },
+      "verifie_le": "2026-08-16"
+    },
+    {
+      "id": "cee",
+      "nom": "Certificats d'économie d'énergie",
+      "resume": "Primes versées par les fournisseurs d'énergie, tenus par la loi de financer des économies d'énergie. Cumulables avec MaPrimeRénov'.",
+      "pour_qui": ["locataire", "proprietaire_occupant", "proprietaire_bailleur"],
+      "conditions": [
+        "Sans condition de ressources pour la plupart des opérations",
+        "Demande à formuler auprès du fournisseur avant de signer le devis",
+        "Travaux réalisés par une entreprise reconnue garante de l'environnement"
+      ],
+      "source": {
+        "nom": "Service-Public.fr — fiche F35584",
+        "url": "https://www.service-public.fr/particuliers/vosdroits/F35584"
+      },
+      "verifie_le": "2026-08-16"
+    },
+    {
+      "id": "eco-ptz",
+      "nom": "Éco-prêt à taux zéro",
+      "resume": "Prêt sans intérêts pour financer des travaux de rénovation énergétique, remboursable sur plusieurs années.",
+      "pour_qui": ["proprietaire_occupant", "proprietaire_bailleur"],
+      "conditions": [
+        "Sans condition de ressources",
+        "Logement achevé depuis un nombre d'années minimum fixé par la réglementation",
+        "Occupé à titre de résidence principale",
+        "Cumulable avec MaPrimeRénov'"
+      ],
+      "source": {
+        "nom": "Service-Public.fr — fiche F19905",
+        "url": "https://www.service-public.fr/particuliers/vosdroits/F19905"
+      },
+      "verifie_le": "2026-08-16"
+    },
+    {
+      "id": "anah-bailleurs",
+      "nom": "Aides de l'Anah aux bailleurs",
+      "resume": "Aides aux travaux et avantage fiscal pour les propriétaires qui louent à un loyer inférieur au marché, sous conventionnement.",
+      "pour_qui": ["proprietaire_bailleur"],
+      "conditions": [
+        "Convention signée avec l'Anah, fixant un plafond de loyer",
+        "Locataire dont les ressources ne dépassent pas un plafond",
+        "Engagement de location sur une durée minimale"
+      ],
+      "source": {
+        "nom": "Agence nationale de l'habitat",
+        "url": "https://www.anah.gouv.fr/action/aides"
+      },
+      "verifie_le": "2026-08-16"
+    }
+  ]
+}

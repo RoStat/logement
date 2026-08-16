@@ -48,8 +48,11 @@ python -m src.ingest.fibre --departement 69
 # Table de rattachement des communes fusionnées
 python -m src.ingest.communes_historiques --departement 69
 
-# Aides
+# Aides — valide la fiche versionnée reference/aides_nationales.json
 python -m src.ingest.aides
+
+# Aides — vérifie en plus que chaque lien officiel répond
+python -m src.ingest.aides --verifier-liens
 ```
 
 ## Transformation

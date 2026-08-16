@@ -49,6 +49,11 @@ jobs:
       - name: Déploiement fibre
         run: python -m src.ingest.fibre --departement "$DEPARTEMENT"
 
+      - name: Aides publiques
+        # Vérifie aussi que chaque lien officiel cité répond encore : une fiche
+        # d'aides qui pointe dans le vide est pire qu'absente.
+        run: python -m src.ingest.aides --verifier-liens
+
       - name: Rapprochement DVF / DPE
         run: python -m src.transform.rapprochement --departement "$DEPARTEMENT"
 
