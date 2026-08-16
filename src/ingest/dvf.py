@@ -180,24 +180,26 @@ def filter_dvf(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
     prix_m2 = df["valeur_fonciere"] / df["surface_reelle_bati"]
     mask_prix_m2 = prix_m2.between(PRIX_M2_MIN, PRIX_M2_MAX)
 
-    df_filtered = df[
-        mask_vente & mask_type & mask_prix & mask_surface & mask_prix_m2
-    ].copy()
+    # Détection multi-lots sur le fichier BRUT, et non sur le sous-ensemble déjà
+    # filtré : le caractère multi-lots est une propriété de la mutation telle
+    # qu'enregistrée, pas du reliquat qui survit aux filtres. Mesuré sur le 69 en
+    # 2023, la détection tardive ne voyait que 78 des 4 344 mutations concernées,
+    # et laissait passer 11,8 % de lignes au prix au m² surévalué — la valeur
+    # foncière couvrant l'ensemble des lots de la mutation.
+    parcelles_par_mutation = df.groupby("id_mutation")["id_parcelle"].nunique()
+    mutations_multi = parcelles_par_mutation[parcelles_par_mutation > 1].index
+    n_mutations_multi = len(mutations_multi)
+    mask_mono_lot = ~df["id_mutation"].isin(mutations_multi)
 
-    multi_lots = (
-        df_filtered.groupby("id_mutation")["id_parcelle"]
-        .nunique()
-        .reset_index()
+    mask_conserve = (
+        mask_vente & mask_type & mask_prix & mask_surface & mask_prix_m2 & mask_mono_lot
     )
-    multi_lots = multi_lots[multi_lots["id_parcelle"] > 1]["id_mutation"]
-    n_mutations_multi = len(multi_lots)
+    n_lignes_multi = int(
+        (mask_vente & mask_type & mask_prix & mask_surface & mask_prix_m2).sum()
+        - mask_conserve.sum()
+    )
 
-    # Une mutation multi-lots porte plusieurs lignes : compter les mutations
-    # sous-estimait l'exclusion et déséquilibrait le bilan.
-    mask_multi = df_filtered["id_mutation"].isin(multi_lots)
-    n_lignes_multi = int(mask_multi.sum())
-
-    df_filtered = df_filtered[~mask_multi]
+    df_filtered = df[mask_conserve].copy()
 
     n_retained = len(df_filtered)
 

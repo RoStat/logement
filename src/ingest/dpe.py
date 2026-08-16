@@ -39,6 +39,7 @@ SELECT_COLUMNS = [
     "etiquette_dpe",
     "etiquette_ges",
     "conso_5_usages_par_m2_ep",
+    "surface_habitable_logement",
     "date_etablissement_dpe",
     "periode_construction",
     "type_batiment",
@@ -60,6 +61,7 @@ COLUMN_RENAME = {
     "etiquette_dpe": "classe_dpe",
     "etiquette_ges": "classe_ges",
     "conso_5_usages_par_m2_ep": "conso_energie",
+    "surface_habitable_logement": "surface_habitable",
     "date_etablissement_dpe": "date_etablissement",
     "periode_construction": "periode_construction",
     "type_batiment": "type_batiment",
@@ -69,7 +71,7 @@ COLUMN_RENAME = {
 }
 
 # Colonnes à convertir en numérique après renommage.
-NUMERIC_COLUMNS = ["conso_energie", "score_ban"]
+NUMERIC_COLUMNS = ["conso_energie", "surface_habitable", "score_ban"]
 
 # Champ de filtrage : le jeu expose directement le département, il n'y a donc
 # aucune raison de le déduire d'un préfixe de code INSEE.
