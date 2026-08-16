@@ -70,12 +70,14 @@ def construire(departement: str) -> dict:
 
     immo = pd.read_sql(
         "SELECT code_insee, annee, type_local, nb_ventes, prix_m2_median, "
-        "prix_median, surface_mediane FROM agg_commune_immo", con)
+        "prix_median, surface_mediane, prix_m2_p25, prix_m2_p75 "
+        "FROM agg_commune_immo", con)
 
     dpe = pd.read_sql(
         "SELECT code_insee, classe_dpe, nb_logements, part_pct FROM agg_commune_dpe", con)
 
     fibre = pd.read_parquet(PARQUET_DIR / "fibre.parquet")
+    loyers = pd.read_parquet(PARQUET_DIR / "loyers.parquet")
 
     # Le COG ne porte pas les codes postaux. Les diagnostics, eux, en portent un
     # par logement : on retient le plus fréquent de chaque commune, seul utile
@@ -122,6 +124,12 @@ def construire(departement: str) -> dict:
                 int(r["nb_ventes"]), int(r["prix_m2_median"]),
                 int(r["prix_median"]), int(r["surface_mediane"]), int(r["annee"]),
             ]
+            # Écart interquartile du prix au m² : sert de fourchette de budget,
+            # bornée par des ventes réelles plutôt que par une marge arbitraire.
+            if pd.notna(r["prix_m2_p25"]) and pd.notna(r["prix_m2_p75"]):
+                entree.setdefault("q", {})[cle] = [
+                    int(r["prix_m2_p25"]), int(r["prix_m2_p75"]),
+                ]
 
         part = dpe[dpe["code_insee"] == code]
         if not part.empty:
@@ -141,6 +149,23 @@ def construire(departement: str) -> dict:
                 r["classe_dpe"]: [int(r["prix_m2_median"]), int(r["nb_observations"])]
                 for _, r in cr.iterrows()
             }
+
+        # Loyers : on ne retient que les catégories directement comparables aux
+        # agrégats de vente, appartement et maison.
+        loy = loyers[
+            (loyers["code_insee"] == code)
+            & (loyers["categorie"].isin(["appartement", "maison"]))
+        ]
+        for _, r in loy.iterrows():
+            cle = "app" if r["categorie"] == "appartement" else "mai"
+            entree.setdefault("l", {})[cle] = [
+                float(r["loyer_m2"]), float(r["borne_basse"]), float(r["borne_haute"]),
+                # Faux : estimation extrapolée depuis une zone plus large, et non
+                # mesurée sur des annonces de la commune.
+                bool(r["estimation_locale"]),
+            ]
+        if not loy.empty:
+            entree["lm"] = str(loy["millesime"].iloc[0])
 
         ligne_fibre = fibre[fibre["code_insee"] == code]
         if not ligne_fibre.empty and pd.notna(ligne_fibre.iloc[0]["taux_fibre_pct"]):
@@ -182,6 +207,13 @@ def main() -> None:
         logger.info("  Avec taux fibre    : %d", sum("f" in c for c in communes.values()))
         logger.info("  Avec croisement DPE: %d", sum("cr" in c for c in communes.values()))
         logger.info("  Avec code postal   : %d", sum("cp" in c for c in communes.values()))
+        avec_loyer = [c for c in communes.values() if "l" in c]
+        locales = [c for c in avec_loyer if any(v[3] for v in c["l"].values())]
+        logger.info("  Avec loyer         : %d", len(avec_loyer))
+        logger.info(
+            "    dont estimation locale : %d — pour les autres, le loyer est "
+            "extrapolé depuis une zone plus large", len(locales),
+        )
         logger.info("  Effet DPE départemental (écart au D, à commune constante) :")
         for classe in "ABCDEFG":
             if classe in donnees["effetDpe"]:

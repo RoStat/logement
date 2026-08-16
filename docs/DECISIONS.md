@@ -421,3 +421,42 @@ les vérifier — `france-renov.gouv.fr` échoue au handshake TLS depuis
 l'environnement d'intégration, `economie.gouv.fr` renvoie 403 aux clients non
 navigateurs. Les fiches Service-Public.fr, stables et vérifiables, leur sont
 préférées.
+
+## 2026-08-16 — Loyers : la moitié manquante du produit
+
+**Constat** : DVF ne décrit que des ventes. Sans loyers, le site ne pouvait pas
+répondre à la question de son propre lecteur — « je paie tant en location, ai-je
+intérêt à acheter ici ? »
+
+**Source** : « Carte des loyers », Ministère de la Transition écologique,
+millésime 2025. Loyer au m² estimé par commune, décliné en appartement,
+appartement de 1 ou 2 pièces, appartement de 3 pièces et plus, et maison.
+
+**Le champ `TYPPRED` est conservé et affiché.** Il distingue une estimation
+appuyée sur des annonces observées dans la commune d'une extrapolation depuis
+une zone plus large. Sur le Rhône, seules 127 communes sur 237 disposent d'une
+estimation locale : présenter les autres comme une mesure du terrain serait
+trompeur, elles portent donc la mention « estimé hors commune ».
+
+**Piège rencontré** : le fichier est lu en chaînes pour préserver les codes INSEE
+à zéro initial, ce qui rend `decimal=","` inopérant. Toute la colonne devenait
+`NaN` et les médianes s'affichaient à « nan » sans qu'aucune étape n'échoue. Un
+test verrouille désormais la conversion.
+
+**Ce que ça débloque** : le rapport entre prix d'achat et loyer annuel — combien
+d'années de loyer représente le prix du bien. À Villeurbanne, 3 565 €/m² à
+l'achat contre 15,6 €/m²/mois en location : 19 années de loyer.
+
+## 2026-08-16 — Budget conseillé : des bornes mesurées, pas une projection
+
+Les liens vers les portails portent désormais le projet (achat ou location), le
+type de bien et une fourchette de budget.
+
+**La fourchette vient des données, jamais d'une marge arbitraire** : à l'achat,
+l'écart interquartile du prix au m² observé dans la commune ; en location,
+l'intervalle de confiance du modèle ministériel. Multipliés par la surface
+médiane réellement vendue.
+
+**Ce n'est pas une capacité d'emprunt**, et le texte affiché le dit. Le site ne
+connaît ni les revenus, ni l'apport, ni le taux : proposer un budget « que vous
+pouvez emprunter » sortirait de ce que les données permettent d'affirmer.

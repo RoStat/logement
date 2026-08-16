@@ -42,6 +42,9 @@ python -m src.ingest.dpe --all
 # Référentiel géographique
 python -m src.ingest.geo
 
+# Loyers d'annonce par commune (Ministère de la Transition écologique)
+python -m src.ingest.loyers --departement 69
+
 # Déploiement de la fibre (ARCEP) — produit aussi les contours de la carte
 python -m src.ingest.fibre --departement 69
 

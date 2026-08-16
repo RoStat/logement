@@ -46,6 +46,9 @@ jobs:
       - name: Diagnostics énergétiques
         run: python -m src.ingest.dpe --departement "$DEPARTEMENT"
 
+      - name: Loyers d'annonce
+        run: python -m src.ingest.loyers --departement "$DEPARTEMENT"
+
       - name: Déploiement fibre
         run: python -m src.ingest.fibre --departement "$DEPARTEMENT"
 
