@@ -121,3 +121,17 @@ dépôt fraîchement cloné.
 Les sources sont mises à jour à des rythmes différents — DVF plusieurs fois par
 an, l'ARCEP chaque trimestre, le COG chaque janvier. Un passage mensuel les
 couvre sans les solliciter inutilement.
+
+## Architecture des données du site
+
+| Donnée | Source | Pourquoi |
+|---|---|---|
+| Contours de la carte | `web/data/contours_69.json` | géométrie statique, ne se lit pas ligne à ligne |
+| Agrégats communaux | API Supabase, vue `logement_synthese` | une requête peint toute la carte |
+| Détail d'une commune | API Supabase, vues `logement_*` | chargé à la sélection, mis en cache |
+| Index d'adresses de repli | embarqué | quelques kilo-octets, sert quand la BAN est injoignable |
+
+Les vues portent le préfixe `logement_` dans le schéma `public` : PostgREST
+n'expose que les schémas déclarés dans le tableau de bord, et `logement` n'y
+figure pas. Si tu l'y ajoutes (Settings > API > Exposed schemas), les tables
+deviennent interrogeables directement et les vues peuvent être supprimées.

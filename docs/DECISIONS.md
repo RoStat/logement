@@ -460,3 +460,50 @@ médiane réellement vendue.
 **Ce n'est pas une capacité d'emprunt**, et le texte affiché le dit. Le site ne
 connaît ni les revenus, ni l'apport, ni le taux : proposer un budget « que vous
 pouvez emprunter » sortirait de ce que les données permettent d'affirmer.
+
+## 2026-08-16 — Chargement « tiré » plutôt que poussé
+
+Faire transiter 1,3 Mo de SQL par un canal d'outillage est absurde. Les tables
+sont publiées en JSON sur le site — ce sont des données ouvertes — et Postgres
+les tire lui-même via l'extension `http`, en une instruction par table.
+
+**La fonction de chargement est supprimée dans la foulée, et l'extension avec.**
+Une fonction `security definer` s'exécute avec les droits de son propriétaire, et
+PostgreSQL accorde `EXECUTE` à `PUBLIC` par défaut : laissée en place, n'importe
+quel visiteur aurait pu la faire pointer vers une URL arbitraire et réécrire les
+tables. Le rechargement périodique passe par `load_supabase.py`, qui se connecte
+avec ses propres droits et n'a besoin d'aucune de ces facilités.
+
+## 2026-08-16 — Vues publiques plutôt qu'un schéma exposé
+
+PostgREST ne sert que les schémas déclarés dans le tableau de bord, et
+`logement` n'en fait pas partie — le réglage demande les droits superutilisateur.
+
+Plutôt que d'attendre, une surface de lecture explicite est publiée dans
+`public` sous le préfixe `logement_` : sept vues en `security_invoker`, plus une
+vue de synthèse qui rend toute la carte en une requête. Les tables restent dans
+`logement` ; le préfixe écarte toute collision avec l'autre application du
+projet. À supprimer si `logement` est un jour exposé directement.
+
+## 2026-08-16 — La page ne transporte plus ses données
+
+**Constat** : la page pesait 276 Ko, dont 192 Ko d'agrégats embarqués. Tenable
+pour un département, intenable pour trois.
+
+**Choix** : les agrégats viennent désormais de l'API, les contours restent un
+fichier statique — une géométrie ne se lit pas ligne à ligne. Une requête au
+chargement pour peindre la carte, une par commune sélectionnée, mise en cache.
+
+**Effet** : 276 Ko → 88 Ko, et surtout un poids qui ne dépend plus du nombre de
+départements couverts.
+
+**Dégradation prévue** : si l'API ne répond pas, la carte affiche son échec et
+la recherche d'adresse reste utilisable. Une page blanche serait pire qu'une
+page partielle.
+
+## 2026-08-16 — Piège du `.gitignore` non ancré
+
+Le motif `data/`, sans barre oblique initiale, exclut tout répertoire nommé
+`data` à n'importe quelle profondeur — dont `web/data/`, qui doit au contraire
+être publié. Les fichiers du site n'étaient donc jamais versionnés, et un commit
+est passé en ne contenant rien. Le motif est désormais ancré : `/data/`.
