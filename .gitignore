@@ -1,4 +1,6 @@
-data/
+# Ancrée à la racine : sans la barre oblique, le motif exclurait aussi
+# web/data/, qui doit être publié.
+/data/
 *.parquet
 *.db
 *.sqlite
