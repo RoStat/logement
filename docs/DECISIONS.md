@@ -156,25 +156,49 @@ produit la table de rattachement ; `geo.py`, validé, reste inchangé. La
 résolution est transitive, une commune déléguée pouvant pointer vers une commune
 elle-même absorbée par une fusion ultérieure.
 
-## 2026-08-16 — STOP-1 : mutations à plusieurs lignes sur une même parcelle
+## 2026-08-16 — STOP-1 : l'unité d'observation devient la mutation
 
-**Constat, non corrigé à ce stade.** 18,5 % des lignes retenues appartiennent à
-des mutations portant plusieurs lignes sur **une même parcelle** — un appartement
-et ses annexes, ou plusieurs lots d'un même bien. La règle multi-lots, fondée sur
-le décompte de parcelles distinctes, ne les voit pas.
-
-Chaque ligne porte la valeur foncière **totale** de la mutation. Conséquences :
-la vente est comptée plusieurs fois dans `nb_ventes`, et le prix au m² est calculé
-en divisant le prix total par la surface d'un seul lot.
+**Constat** : 18,5 % des lignes retenues appartenaient à des mutations portant
+plusieurs lignes sur **une même parcelle** — un logement et ses annexes, ou
+plusieurs lots d'un même bien. La règle multi-lots, fondée sur le décompte de
+parcelles distinctes, ne les voyait pas. Chaque ligne portant la valeur foncière
+**totale**, la vente était comptée plusieurs fois et le prix au m² obtenu en
+divisant le prix total par la surface d'un seul lot.
 
 Exemple relevé : mutation `2021-1163098`, 947 230 € répétés sur 4 lignes de 60,
 150, 150 et 60 m².
 
-**Ampleur mesurée sur le 69** : 8 506 doublons stricts ; 105 691 mutations réelles
-pour 119 745 lignes. Prix au m² médian 3 990 € contre 3 871 € après regroupement
-par mutation, soit une surestimation systématique atteignant 12 % sur les communes
-à grosses ventes multi-lots (Saint-Didier-au-Mont-d'Or : 6 365 € → 5 591 €).
+**Options mesurées sur le 69** :
 
-**Arbitrage attendu** : passer l'unité d'observation de la ligne à la mutation
-change le sens de `nb_ventes` et déplace de nouveau le taux de rétention, qui est
-un critère de validation.
+| | Observations | Prix/m² médian | Communes ≥15 ventes | Rétention |
+|---|---|---|---|---|
+| A — lignes | 119 745 | 3 990 € | 251 / 275 | 25,9 % |
+| B — par mutation | 105 678 | 3 871 € | 239 / 275 | 22,8 % |
+| C — mutations à lot unique | 102 341 | 3 895 € | 235 / 275 | 22,1 % |
+
+**Choix : B.** C n'écarte que 3,2 % de plus pour un écart de médiane de 0,6 %,
+invisible pour le lecteur, au prix de 4 communes supplémentaires. Le site
+s'adresse à des locataires évaluant un achat : le prix au m² est le seul chiffre
+sur lequel tout repose, et A le surestimait systématiquement — jusqu'à 12 % sur
+les communes à grosses ventes multi-lots.
+
+**Contrepartie assumée** : 14 communes perdent leur page (251 → 237 éligibles),
+soit environ 5 % de la surface SEO et de l'inventaire publicitaire.
+
+**Effets de bord** :
+- `nb_ventes` désigne enfin des ventes et non des lots. La règle de couverture
+  ≥15 ventes redevient conforme à son intention.
+- Les prix aberrants tombent de 6 145 à 381 : la plupart n'étaient pas des
+  cessions symboliques mais des artefacts de division par la surface d'un seul
+  lot. Le filtre porte désormais sur la mutation regroupée.
+- 10 440 doublons stricts supprimés — DVF republie certaines lignes à l'identique.
+- 493 lignes écartées pour mutation mêlant maison et appartement (142 mutations),
+  la valeur foncière n'y étant attribuable ni à l'une ni à l'autre.
+
+**Plage de rétention re-dérivée : 18–32 %** (mesure 22,8 % sur le 69). À
+réexaminer à l'ingestion d'un second département : les zones rurales, plus riches
+en maisons et plus pauvres en ventes multi-lots, retiendront davantage.
+
+**Bilan désormais vérifié en deux temps**, le regroupement faisant changer
+l'unité de compte en cours de traitement : un bilan en lignes jusqu'au
+regroupement, un bilan en mutations ensuite.

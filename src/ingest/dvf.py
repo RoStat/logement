@@ -45,11 +45,22 @@ EXPECTED_COLUMNS = {
 
 VALID_TYPES_LOCAL = {"Maison", "Appartement"}
 
-# DVF compte une ligne par lot et non par vente : le seul filtre type_local
-# retire déjà ~58 % du brut (267 716 lignes sur 462 796 pour le 69). La plage
-# 40–70 % initialement retenue ne correspondait donc à aucune réalité.
-RETENTION_MIN_PCT = 25
-RETENTION_MAX_PCT = 40
+# Colonnes identifiant une ligne-lot : DVF en republie certaines à l'identique.
+DEDUP_KEYS = [
+    "id_mutation",
+    "id_parcelle",
+    "type_local",
+    "valeur_fonciere",
+    "surface_reelle_bati",
+]
+
+# Le taux rapporte les mutations retenues aux lignes brutes. DVF émettant une
+# ligne par lot, le seul filtre type_local retire déjà ~58 % du brut, et le
+# regroupement par mutation ~12 % du reliquat. Mesure sur le 69 : 22,8 %.
+# Plage à réexaminer à l'ingestion d'un second département : les zones rurales,
+# plus riches en maisons et plus pauvres en ventes multi-lots, retiendront plus.
+RETENTION_MIN_PCT = 18
+RETENTION_MAX_PCT = 32
 
 
 def retention_pct(retenues: int, brutes: int) -> float:
@@ -132,35 +143,75 @@ def validate_schema(df: pd.DataFrame) -> None:
         )
 
 
-# Compteurs d'exclusion exprimés en lignes. Leur somme, augmentée des lignes
-# retenues, doit reconstituer exactement le volume brut : c'est ce qui garantit
-# qu'aucun filtre n'est laissé sans instrumentation.
+# Compteurs d'exclusion exprimés en LIGNES. Leur somme, augmentée des doublons
+# et des lignes parvenues au regroupement, doit reconstituer le volume brut :
+# c'est ce qui garantit qu'aucun filtre n'est laissé sans instrumentation.
 EXCLUSION_KEYS = (
     "exclues_non_vente",
     "exclues_type_local",
     "exclues_prix_manquant",
     "exclues_surface_faible",
-    "exclues_prix_m2_aberrant",
     "exclues_multi_lots",
+    "doublons_stricts",
+    "exclues_type_mixte",
 )
 
 
 def check_balance(stats: dict[str, int]) -> None:
-    """Vérifie que exclusions + retenues = brut. Lève RuntimeError sinon."""
-    total = sum(stats[k] for k in EXCLUSION_KEYS) + stats["lignes_retenues"]
+    """Vérifie les deux bilans, en lignes puis en mutations.
+
+    Le regroupement fait changer l'unité de compte en cours de traitement : les
+    deux bilans doivent être vérifiés séparément, sous peine de comparer des
+    lignes à des mutations.
+    """
+    total = sum(stats[k] for k in EXCLUSION_KEYS) + stats["lignes_regroupees"]
     brut = stats["lignes_brutes"]
     if total != brut:
         detail = ", ".join(f"{k}={stats[k]}" for k in EXCLUSION_KEYS)
         raise RuntimeError(
-            f"Bilan des filtres DVF incohérent : {total} comptabilisées pour "
-            f"{brut} lignes brutes (écart {brut - total}). "
+            f"Bilan des filtres DVF incohérent : {total} lignes comptabilisées "
+            f"pour {brut} brutes (écart {brut - total}). "
             f"Un filtre n'est pas instrumenté. Détail : {detail}, "
-            f"lignes_retenues={stats['lignes_retenues']}"
+            f"lignes_regroupees={stats['lignes_regroupees']}"
+        )
+
+    formees = stats["mutations_formees"]
+    attendu = formees - stats["exclues_prix_m2_aberrant"]
+    if attendu != stats["mutations_retenues"]:
+        raise RuntimeError(
+            f"Bilan des mutations incohérent : {formees} formées moins "
+            f"{stats['exclues_prix_m2_aberrant']} aberrantes donnent {attendu}, "
+            f"mais {stats['mutations_retenues']} sont retenues."
         )
 
 
+def _regrouper_par_mutation(df: pd.DataFrame) -> pd.DataFrame:
+    """Réduit les lignes-lots à une ligne par mutation.
+
+    La surface bâtie est sommée sur les lots d'habitation retenus ; la valeur
+    foncière, qui porte déjà sur la mutation entière, est reprise telle quelle.
+    Commune et date sont invariantes au sein d'une mutation (vérifié sur le 69).
+    """
+    agregations = {
+        col: "first" for col in df.columns if col not in ("id_mutation", "surface_reelle_bati")
+    }
+    agregations["surface_reelle_bati"] = "sum"
+
+    mutations = df.groupby("id_mutation", as_index=False).agg(agregations)
+    mutations["nb_lots"] = (
+        df.groupby("id_mutation", as_index=False).size()["size"].to_numpy()
+    )
+    return mutations
+
+
 def filter_dvf(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
-    """Applique les filtres du cahier des charges et retourne (df filtré, stats)."""
+    """Applique les filtres du cahier des charges et retourne (mutations, stats).
+
+    L'unité d'observation est la **mutation**, pas la ligne : DVF émet une ligne
+    par lot, toutes porteuses de la valeur foncière totale. Compter les lignes
+    gonflait le nombre de ventes et surestimait le prix au m² — jusqu'à 12 % sur
+    les communes à grosses ventes multi-lots.
+    """
     n_raw = len(df)
 
     df["valeur_fonciere"] = (
@@ -174,60 +225,74 @@ def filter_dvf(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
     mask_prix = df["valeur_fonciere"].notna() & (df["valeur_fonciere"] > 0)
     mask_surface = df["surface_reelle_bati"] > 9
 
-    # Cessions à valeur symbolique (1 €, donations, ventes entre proches) :
-    # elles passent mask_prix, qui n'écarte que les valeurs nulles ou négatives,
-    # et suffisent à faire échouer le contrôle qualité sur la médiane communale.
-    prix_m2 = df["valeur_fonciere"] / df["surface_reelle_bati"]
-    mask_prix_m2 = prix_m2.between(PRIX_M2_MIN, PRIX_M2_MAX)
-
     # Détection multi-lots sur le fichier BRUT, et non sur le sous-ensemble déjà
     # filtré : le caractère multi-lots est une propriété de la mutation telle
-    # qu'enregistrée, pas du reliquat qui survit aux filtres. Mesuré sur le 69 en
-    # 2023, la détection tardive ne voyait que 78 des 4 344 mutations concernées,
-    # et laissait passer 11,8 % de lignes au prix au m² surévalué — la valeur
-    # foncière couvrant l'ensemble des lots de la mutation.
+    # qu'enregistrée, pas du reliquat qui survit aux filtres.
     parcelles_par_mutation = df.groupby("id_mutation")["id_parcelle"].nunique()
     mutations_multi = parcelles_par_mutation[parcelles_par_mutation > 1].index
     n_mutations_multi = len(mutations_multi)
-    mask_mono_lot = ~df["id_mutation"].isin(mutations_multi)
+    mask_mono_parcelle = ~df["id_mutation"].isin(mutations_multi)
 
-    mask_conserve = (
-        mask_vente & mask_type & mask_prix & mask_surface & mask_prix_m2 & mask_mono_lot
-    )
-    n_lignes_multi = int(
-        (mask_vente & mask_type & mask_prix & mask_surface & mask_prix_m2).sum()
-        - mask_conserve.sum()
-    )
+    cumul = mask_vente
+    n_non_vente = int((~mask_vente).sum())
+    n_type = int(cumul.sum() - (cumul & mask_type).sum())
+    cumul = cumul & mask_type
+    n_prix = int(cumul.sum() - (cumul & mask_prix).sum())
+    cumul = cumul & mask_prix
+    n_surface = int(cumul.sum() - (cumul & mask_surface).sum())
+    cumul = cumul & mask_surface
+    n_multi = int(cumul.sum() - (cumul & mask_mono_parcelle).sum())
+    cumul = cumul & mask_mono_parcelle
 
-    df_filtered = df[mask_conserve].copy()
+    eligibles = df[cumul].copy()
 
-    n_retained = len(df_filtered)
+    # DVF republie certaines lignes à l'identique.
+    n_avant_dedup = len(eligibles)
+    eligibles = eligibles.drop_duplicates(subset=DEDUP_KEYS)
+    n_doublons = n_avant_dedup - len(eligibles)
+
+    # Une mutation mêlant maison et appartement ne permet pas d'attribuer la
+    # valeur foncière à l'un ou l'autre : même raison que le multi-parcelles.
+    types_par_mutation = eligibles.groupby("id_mutation")["type_local"].nunique()
+    mutations_mixtes = types_par_mutation[types_par_mutation > 1].index
+    mask_mixte = eligibles["id_mutation"].isin(mutations_mixtes)
+    n_lignes_mixtes = int(mask_mixte.sum())
+    eligibles = eligibles[~mask_mixte]
+
+    n_lignes_regroupees = len(eligibles)
+    mutations = _regrouper_par_mutation(eligibles)
+    n_mutations_formees = len(mutations)
+
+    # Cessions à valeur symbolique (1 €, donations, ventes entre proches) : elles
+    # passent mask_prix, qui n'écarte que les valeurs nulles ou négatives. Le
+    # contrôle porte sur la mutation regroupée, seule surface complète connue.
+    prix_m2 = mutations["valeur_fonciere"] / mutations["surface_reelle_bati"]
+    mask_prix_m2 = prix_m2.between(PRIX_M2_MIN, PRIX_M2_MAX)
+    n_aberrants = int((~mask_prix_m2).sum())
+
+    result = mutations[mask_prix_m2].copy()
+    n_retenues = len(result)
 
     stats = {
         "lignes_brutes": n_raw,
-        "exclues_non_vente": int((~mask_vente).sum()),
-        "exclues_type_local": int(mask_vente.sum() - (mask_vente & mask_type).sum()),
-        "exclues_prix_manquant": int(
-            (mask_vente & mask_type).sum()
-            - (mask_vente & mask_type & mask_prix).sum()
-        ),
-        "exclues_surface_faible": int(
-            (mask_vente & mask_type & mask_prix).sum()
-            - (mask_vente & mask_type & mask_prix & mask_surface).sum()
-        ),
-        "exclues_prix_m2_aberrant": int(
-            (mask_vente & mask_type & mask_prix & mask_surface).sum()
-            - (mask_vente & mask_type & mask_prix & mask_surface & mask_prix_m2).sum()
-        ),
-        "exclues_multi_lots": n_lignes_multi,
-        "lignes_retenues": n_retained,
+        "exclues_non_vente": n_non_vente,
+        "exclues_type_local": n_type,
+        "exclues_prix_manquant": n_prix,
+        "exclues_surface_faible": n_surface,
+        "exclues_multi_lots": n_multi,
+        "doublons_stricts": n_doublons,
+        "exclues_type_mixte": n_lignes_mixtes,
+        "lignes_regroupees": n_lignes_regroupees,
+        "mutations_formees": n_mutations_formees,
+        "exclues_prix_m2_aberrant": n_aberrants,
+        "mutations_retenues": n_retenues,
         "mutations_multi_lots": n_mutations_multi,
-        "taux_retention_pct": retention_pct(n_retained, n_raw),
+        "taux_retention_pct": retention_pct(n_retenues, n_raw),
     }
 
     check_balance(stats)
 
-    return df_filtered, stats
+    return result, stats
 
 
 def run_ingestion(
@@ -271,14 +336,14 @@ def run_ingestion(
             out_path = PARQUET_DIR / "dvf" / f"dvf_{annee}.parquet"
             write_parquet(df_clean, out_path)
             logger.info(
-                "  %s : %d → %d lignes (rétention %.1f%%)",
-                annee, stats["lignes_brutes"], stats["lignes_retenues"],
+                "  %s : %d lignes → %d mutations (rétention %.1f%%)",
+                annee, stats["lignes_brutes"], stats["mutations_retenues"],
                 stats["taux_retention_pct"],
             )
 
     if total_stats:
         total_stats["taux_retention_pct"] = retention_pct(
-            total_stats.get("lignes_retenues", 0), total_stats.get("lignes_brutes", 0),
+            total_stats.get("mutations_retenues", 0), total_stats.get("lignes_brutes", 0),
         )
         check_balance(total_stats)
 

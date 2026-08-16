@@ -59,7 +59,7 @@ class TestFilterDvf:
         df = pd.DataFrame([_make_dvf_row()])
         result, stats = filter_dvf(df)
         assert len(result) == 1
-        assert stats["lignes_retenues"] == 1
+        assert stats["mutations_retenues"] == 1
 
     def test_excludes_non_vente(self) -> None:
         df = pd.DataFrame([_make_dvf_row(nature_mutation="Échange")])
@@ -117,14 +117,14 @@ class TestTauxRetention:
 
     @pytest.mark.parametrize(
         ("retenues", "brutes"),
-        [(0, 1), (1, 1), (144_074, 462_796), (1, 3), (999, 1000)],
+        [(0, 1), (1, 1), (105_456, 462_796), (1, 3), (999, 1000)],
     )
     def test_toujours_dans_les_bornes(self, retenues: int, brutes: int) -> None:
         assert 0 <= retention_pct(retenues, brutes) <= 100
 
     def test_valeur_reelle_du_69(self) -> None:
-        """Cas réel : 462 796 brutes → 144 074 retenues."""
-        assert retention_pct(144_074, 462_796) == 31.1
+        """Cas réel : 462 796 lignes brutes → 105 456 mutations retenues."""
+        assert retention_pct(105_456, 462_796) == 22.8
 
     def test_plage_attendue_coherente(self) -> None:
         assert 0 < RETENTION_MIN_PCT < RETENTION_MAX_PCT <= 100
@@ -145,7 +145,7 @@ class TestBilanDesFiltres:
 
         assert stats["exclues_multi_lots"] == 3
         assert stats["mutations_multi_lots"] == 1
-        assert stats["lignes_retenues"] == 2
+        assert stats["mutations_retenues"] == 2
 
     def test_bilan_equilibre(self) -> None:
         """exclusions + retenues doit reconstituer le volume brut."""
@@ -160,7 +160,7 @@ class TestBilanDesFiltres:
         ]
         _, stats = filter_dvf(pd.DataFrame(rows))
 
-        total = sum(stats[k] for k in EXCLUSION_KEYS) + stats["lignes_retenues"]
+        total = sum(stats[k] for k in EXCLUSION_KEYS) + stats["lignes_regroupees"]
         assert total == stats["lignes_brutes"] == len(rows)
 
     def test_chaque_filtre_a_son_compteur(self) -> None:
@@ -177,14 +177,16 @@ class TestBilanDesFiltres:
         assert stats["exclues_type_local"] == 1
         assert stats["exclues_prix_manquant"] == 1
         assert stats["exclues_surface_faible"] == 1
-        assert stats["lignes_retenues"] == 1
+        assert stats["mutations_retenues"] == 1
 
     def test_assertion_declenchee_sur_compteur_faux(self) -> None:
         """Un filtre non instrumenté doit faire échouer le bilan."""
         stats = dict.fromkeys(EXCLUSION_KEYS, 0)
         stats.update({
             "lignes_brutes": 10, "exclues_non_vente": 1, "exclues_type_local": 1,
-            "exclues_multi_lots": 1, "lignes_retenues": 5,
+            "exclues_multi_lots": 1, "lignes_regroupees": 5,
+            "mutations_formees": 5, "exclues_prix_m2_aberrant": 0,
+            "mutations_retenues": 5,
         })
         with pytest.raises(RuntimeError, match="pas instrumenté"):
             check_balance(stats)
@@ -201,7 +203,7 @@ class TestPrixM2Aberrant:
 
         assert stats["exclues_prix_m2_aberrant"] == 1
         assert stats["exclues_prix_manquant"] == 0, "1 € n'est pas un prix manquant"
-        assert stats["lignes_retenues"] == 1
+        assert stats["mutations_retenues"] == 1
         assert "M2" in result["id_mutation"].values
 
     def test_prix_au_m2_excessif_exclu(self) -> None:
@@ -233,7 +235,7 @@ class TestPrixM2Aberrant:
             _make_dvf_row(id_mutation="M4", id_parcelle="P4", surface_reelle_bati="5"),
         ]
         _, stats = filter_dvf(pd.DataFrame(rows))
-        total = sum(stats[k] for k in EXCLUSION_KEYS) + stats["lignes_retenues"]
+        total = sum(stats[k] for k in EXCLUSION_KEYS) + stats["lignes_regroupees"]
         assert total == stats["lignes_brutes"] == len(rows)
 
     def test_bornes_partagees_avec_le_controle_qualite(self) -> None:
@@ -243,3 +245,85 @@ class TestPrixM2Aberrant:
 
         assert quality_checks.PRIX_M2_MIN is PRIX_M2_MIN
         assert quality_checks.PRIX_M2_MAX is PRIX_M2_MAX
+
+
+class TestRegroupementParMutation:
+    def test_une_mutation_donne_une_ligne(self) -> None:
+        """DVF émet une ligne par lot, toutes porteuses de la valeur totale :
+        les compter séparément gonflait le nombre de ventes."""
+        rows = [
+            _make_dvf_row(id_mutation="M1", id_parcelle="P1",
+                          valeur_fonciere="900000", surface_reelle_bati="60"),
+            _make_dvf_row(id_mutation="M1", id_parcelle="P1",
+                          valeur_fonciere="900000", surface_reelle_bati="150"),
+        ]
+        result, stats = filter_dvf(pd.DataFrame(rows))
+
+        assert len(result) == 1
+        assert stats["mutations_retenues"] == 1
+        assert stats["lignes_regroupees"] == 2
+
+    def test_surface_sommee_valeur_conservee(self) -> None:
+        """Le prix au m² doit se calculer sur la surface totale vendue."""
+        rows = [
+            _make_dvf_row(id_mutation="M1", id_parcelle="P1",
+                          valeur_fonciere="900000", surface_reelle_bati="60"),
+            _make_dvf_row(id_mutation="M1", id_parcelle="P1",
+                          valeur_fonciere="900000", surface_reelle_bati="150"),
+        ]
+        result, _ = filter_dvf(pd.DataFrame(rows))
+        ligne = result.iloc[0]
+
+        assert ligne["surface_reelle_bati"] == 210
+        assert ligne["valeur_fonciere"] == 900000
+        assert ligne["nb_lots"] == 2
+
+    def test_doublons_stricts_supprimes(self) -> None:
+        """DVF republie certaines lignes à l'identique."""
+        rows = [
+            _make_dvf_row(id_mutation="M1", id_parcelle="P1", surface_reelle_bati="80"),
+            _make_dvf_row(id_mutation="M1", id_parcelle="P1", surface_reelle_bati="80"),
+        ]
+        result, stats = filter_dvf(pd.DataFrame(rows))
+
+        assert stats["doublons_stricts"] == 1
+        assert result.iloc[0]["surface_reelle_bati"] == 80, "surface dédoublée"
+
+    def test_mutation_mixte_ecartee(self) -> None:
+        """Maison et appartement dans une même mutation : la valeur foncière
+        n'est attribuable ni à l'un ni à l'autre."""
+        rows = [
+            _make_dvf_row(id_mutation="M1", id_parcelle="P1", type_local="Maison"),
+            _make_dvf_row(id_mutation="M1", id_parcelle="P1", type_local="Appartement"),
+            _make_dvf_row(id_mutation="M2", id_parcelle="P2"),
+        ]
+        result, stats = filter_dvf(pd.DataFrame(rows))
+
+        assert stats["exclues_type_mixte"] == 2
+        assert stats["mutations_retenues"] == 1
+        assert result.iloc[0]["id_mutation"] == "M2"
+
+    def test_prix_m2_evalue_apres_regroupement(self) -> None:
+        """900 000 € pour 60 m² dépasse la borne haute, mais la mutation porte
+        210 m² au total : elle doit être conservée."""
+        rows = [
+            _make_dvf_row(id_mutation="M1", id_parcelle="P1",
+                          valeur_fonciere="900000", surface_reelle_bati="60"),
+            _make_dvf_row(id_mutation="M1", id_parcelle="P1",
+                          valeur_fonciere="900000", surface_reelle_bati="150"),
+        ]
+        _, stats = filter_dvf(pd.DataFrame(rows))
+
+        assert stats["exclues_prix_m2_aberrant"] == 0
+        assert stats["mutations_retenues"] == 1
+
+    def test_bilan_mutations_verifie(self) -> None:
+        """Un décompte de mutations incohérent doit être détecté."""
+        stats = dict.fromkeys(EXCLUSION_KEYS, 0)
+        stats.update({
+            "lignes_brutes": 5, "lignes_regroupees": 5,
+            "mutations_formees": 5, "exclues_prix_m2_aberrant": 1,
+            "mutations_retenues": 5,
+        })
+        with pytest.raises(RuntimeError, match="mutations incohérent"):
+            check_balance(stats)
