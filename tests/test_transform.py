@@ -2,10 +2,12 @@
 
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from src.transform import build_aggregates
 from src.transform.build_aggregates import REQUIRED_INPUTS, check_inputs
+from src.transform.export_web import effet_dpe_departemental
 
 
 @pytest.fixture
@@ -88,3 +90,64 @@ class TestRattachementRequis:
     def test_commande_de_production_citee(self) -> None:
         commandes = dict(REQUIRED_INPUTS)
         assert "communes_historiques" in commandes["communes_historiques.parquet"]
+
+
+class TestEffetDpeDepartemental:
+    """L'écart de prix par étiquette doit se mesurer à commune constante.
+
+    Agrégé brut sur un département, il fait ressortir les logements classés G
+    au-dessus des D : la localisation écrase l'effet énergétique, les G étant
+    massivement des immeubles anciens d'hypercentre.
+    """
+
+    @staticmethod
+    def _croisement(lignes: list[tuple]) -> pd.DataFrame:
+        return pd.DataFrame(
+            lignes, columns=["code_insee", "classe_dpe", "nb_observations", "prix_m2_median"],
+        )
+
+    def test_ecart_relatif_a_la_classe_d(self) -> None:
+        d = self._croisement([
+            ("69123", "C", 100, 5500), ("69123", "D", 100, 5000),
+        ])
+        effet = effet_dpe_departemental(d)
+
+        assert effet["D"][0] == 0.0
+        assert effet["C"][0] == pytest.approx(10.0)
+
+    def test_localisation_neutralisee(self) -> None:
+        """Commune chère où le G domine, commune bon marché où le C domine :
+        agrégé brut, le G ressortirait gagnant. À commune constante, non."""
+        d = self._croisement([
+            # commune chère : le G y vaut moins que le D
+            ("69123", "D", 100, 6000), ("69123", "G", 900, 5400),
+            # commune bon marché : le C y vaut plus que le D
+            ("69300", "D", 100, 2000), ("69300", "C", 100, 2400),
+        ])
+        effet = effet_dpe_departemental(d)
+
+        assert effet["G"][0] == pytest.approx(-10.0), "le G doit rester sous le D"
+        assert effet["C"][0] == pytest.approx(20.0)
+
+    def test_ponderation_par_les_effectifs(self) -> None:
+        """Une commune à 1 000 ventes doit peser plus qu'une commune à 10."""
+        d = self._croisement([
+            ("69123", "D", 1000, 5000), ("69123", "C", 1000, 5500),
+            ("69300", "D", 10, 2000), ("69300", "C", 10, 4000),
+        ])
+        effet = effet_dpe_departemental(d)
+
+        assert effet["C"][0] < 30, "la petite commune ne doit pas dominer"
+        assert effet["C"][1] == 1010
+
+    def test_commune_sans_reference_ignoree(self) -> None:
+        """Sans classe D, aucune comparaison intra-commune n'est possible."""
+        d = self._croisement([("69123", "C", 100, 5000), ("69123", "E", 100, 4000)])
+        assert effet_dpe_departemental(d) == {}
+
+    def test_effectifs_faibles_ecartes(self) -> None:
+        d = self._croisement([("69123", "D", 2, 5000), ("69123", "C", 2, 9000)])
+        assert effet_dpe_departemental(d) == {}
+
+    def test_jeu_vide(self) -> None:
+        assert effet_dpe_departemental(self._croisement([])) == {}

@@ -309,3 +309,34 @@ se vend plus cher au m² pour d'autres raisons. Le champ `periode_construction`
 du jeu DPE permettrait de contrôler ce facteur ; ce n'est pas fait à ce stade.
 
 Le G, avec 881 observations sur 29 communes, reste trop peu fourni pour conclure.
+
+## 2026-08-16 — Liens vers les portails d'annonces
+
+**Choix** : trois portails — Bien'ici, Leboncoin, SeLoger — décrits dans une
+table déclarative côté page, une entrée par site. Ces adresses reposent sur des
+paramètres non documentés, susceptibles de changer sans préavis : les isoler
+permet d'en réparer une d'une seule ligne plutôt que de fouiller le code.
+
+**Vérification** : seul Bien'ici a pu être confirmé automatiquement (HTTP 200).
+Leboncoin et SeLoger renvoient 403 à toute requête non navigateur — c'est leur
+protection anti-robot, pas une URL invalide. Ces deux liens restent donc à
+valider à la main, et une vérification en intégration continue se heurtera au
+même refus.
+
+**Positionnement** : les liens sont placés après les chiffres, jamais avant,
+libellés « sites externes », et portent `rel="noopener nofollow"`. Aucune
+affiliation n'est engagée : la promesse du site est « données publiques, sans
+agence », et une orientation intéressée la ruinerait. À renégocier une fois le
+trafic établi.
+
+## 2026-08-16 — Absence de donnée signalée par la texture
+
+**Constat, relevé au rendu** : en thème sombre, les communes sans données
+(gris-vert très sombre) et les communes les moins chères (bas de rampe violet)
+ont des luminances quasi identiques — 0,020 contre 0,014. Elles étaient donc
+indiscernables.
+
+**Choix** : hachures diagonales plutôt qu'une teinte de plus. L'absence de
+donnée n'est pas une valeur faible : elle appelle un canal catégoriquement
+différent, pas une nuance sur la même échelle. Le témoin de légende reprend le
+motif.

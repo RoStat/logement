@@ -23,6 +23,36 @@ logger = get_logger("transform.export_web")
 # G vaut 7 : plus la moyenne est élevée, plus le parc est énergivore.
 RANG_DPE = {"A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7}
 
+# En deçà, une médiane communale par étiquette ne veut rien dire.
+OBSERVATIONS_MIN = 8
+
+# Nombre d'étiquettes distinctes requis pour qu'une comparaison ait un sens.
+CLASSES_MIN = 3
+
+
+def effet_dpe_departemental(croisement: pd.DataFrame) -> dict:
+    """Écart de prix par étiquette, mesuré à commune constante.
+
+    Agrégé sur tout le département, le résultat est trompeur : les logements
+    classés G sont massivement des immeubles anciens d'hypercentre, et
+    ressortent au-dessus des D. La localisation écrase l'effet énergétique, il
+    faut donc comparer chaque étiquette au sein de sa propre commune.
+    """
+    d = croisement[croisement["nb_observations"] >= 5].copy()
+    reference = d[d["classe_dpe"] == "D"].set_index("code_insee")["prix_m2_median"]
+    d["reference"] = d["code_insee"].map(reference)
+    d = d[d["reference"].notna() & (d["reference"] > 0)]
+    if d.empty:
+        return {}
+
+    d["ratio"] = d["prix_m2_median"] / d["reference"]
+    effet = {}
+    for classe, groupe in d.groupby("classe_dpe"):
+        poids = groupe["nb_observations"].sum()
+        moyenne = (groupe["ratio"] * groupe["nb_observations"]).sum() / poids
+        effet[classe] = [round((moyenne - 1) * 100, 1), int(poids)]
+    return effet
+
 
 def dernier_millesime(df: pd.DataFrame, cle: str = "code_insee") -> pd.DataFrame:
     """Ne conserve, pour chaque commune, que la ligne de l'année la plus récente."""
@@ -47,6 +77,20 @@ def construire(departement: str) -> dict:
 
     fibre = pd.read_parquet(PARQUET_DIR / "fibre.parquet")
 
+    # Le COG ne porte pas les codes postaux. Les diagnostics, eux, en portent un
+    # par logement : on retient le plus fréquent de chaque commune, seul utile
+    # pour construire les liens vers les portails d'annonces.
+    dpe_cp = pd.read_parquet(PARQUET_DIR / "dpe" / f"dpe_dep{departement}.parquet",
+                             columns=["code_insee", "code_postal"])
+    codes_postaux = (
+        dpe_cp.dropna().groupby("code_insee")["code_postal"]
+        .agg(lambda s: s.mode().iloc[0] if len(s.mode()) else None)
+    )
+
+    croisement = pd.read_sql(
+        "SELECT code_insee, type_local, classe_dpe, nb_observations, prix_m2_median "
+        "FROM agg_commune_croisement", con)
+
     # Moyenne pondérée du rang DPE : un parc noté C en moyenne vaut 3.
     dpe["rang"] = dpe["classe_dpe"].map(RANG_DPE)
     moyennes = dpe.dropna(subset=["rang"]).groupby("code_insee").apply(
@@ -61,6 +105,8 @@ def construire(departement: str) -> dict:
             continue
 
         entree = {"n": c["nom"], "s": c["slug"], "v": {}}
+        if code in codes_postaux.index and codes_postaux[code]:
+            entree["cp"] = str(codes_postaux[code])
 
         ligne_prix = prix[prix["code_insee"] == code]
         if not ligne_prix.empty:
@@ -83,6 +129,19 @@ def construire(departement: str) -> dict:
         if code in moyennes.index:
             entree["dm"] = float(moyennes[code])
 
+        # Prix par étiquette dans la commune, appartements seulement : mêler
+        # maisons et appartements comparerait des marchés différents.
+        cr = croisement[
+            (croisement["code_insee"] == code)
+            & (croisement["type_local"] == "Appartement")
+            & (croisement["nb_observations"] >= OBSERVATIONS_MIN)
+        ]
+        if len(cr) >= CLASSES_MIN:
+            entree["cr"] = {
+                r["classe_dpe"]: [int(r["prix_m2_median"]), int(r["nb_observations"])]
+                for _, r in cr.iterrows()
+            }
+
         ligne_fibre = fibre[fibre["code_insee"] == code]
         if not ligne_fibre.empty and pd.notna(ligne_fibre.iloc[0]["taux_fibre_pct"]):
             entree["f"] = float(ligne_fibre.iloc[0]["taux_fibre_pct"])
@@ -95,7 +154,12 @@ def construire(departement: str) -> dict:
     contours = json.loads(chemin_contours.read_text(encoding="utf-8"))
     millesime_fibre = fibre["millesime"].iloc[0] if len(fibre) else None
 
-    return {"communes": sortie, "contours": contours, "millesimeFibre": millesime_fibre}
+    return {
+        "communes": sortie,
+        "contours": contours,
+        "millesimeFibre": millesime_fibre,
+        "effetDpe": effet_dpe_departemental(croisement[croisement["type_local"] == "Appartement"]),
+    }
 
 
 def main() -> None:
@@ -116,6 +180,13 @@ def main() -> None:
         logger.info("  Millésimes prix    : %s", sorted(annees))
         logger.info("  Avec DPE moyen     : %d", sum("dm" in c for c in communes.values()))
         logger.info("  Avec taux fibre    : %d", sum("f" in c for c in communes.values()))
+        logger.info("  Avec croisement DPE: %d", sum("cr" in c for c in communes.values()))
+        logger.info("  Avec code postal   : %d", sum("cp" in c for c in communes.values()))
+        logger.info("  Effet DPE départemental (écart au D, à commune constante) :")
+        for classe in "ABCDEFG":
+            if classe in donnees["effetDpe"]:
+                ecart, n = donnees["effetDpe"][classe]
+                logger.info("    %s : %+6.1f %%  (%d observations)", classe, ecart, n)
         logger.info("  Contours           : %d communes", len(donnees["contours"]["communes"]))
         logger.info("  Fichier            : %s (%.0f Ko)", chemin, chemin.stat().st_size / 1024)
 
