@@ -135,6 +135,11 @@ def main() -> None:
         "--sql", type=str, default=None,
         help="Écrire le script SQL dans ce fichier au lieu de se connecter",
     )
+    parser.add_argument(
+        "--json", type=str, default=None,
+        help="Écrire un fichier JSON par table dans ce répertoire, pour un "
+             "chargement tiré par la base plutôt que poussé par le client",
+    )
     args = parser.parse_args()
 
     with timed_operation(logger, "Chargement Supabase"):
@@ -145,6 +150,18 @@ def main() -> None:
         for nom in TABLES:
             logger.info("  %-24s %6d lignes", nom, len(tables[nom]))
         logger.info("  %-24s %6d instructions", "script", len(instructions))
+
+        if args.json:
+            dossier = Path(args.json)
+            dossier.mkdir(parents=True, exist_ok=True)
+            for nom in TABLES:
+                chemin = dossier / f"{nom}.json"
+                tables[nom].to_json(chemin, orient="records", force_ascii=True)
+                logger.info(
+                    "  %-24s %s (%.0f Ko)",
+                    nom, chemin.name, chemin.stat().st_size / 1024,
+                )
+            return
 
         if args.sql:
             Path(args.sql).write_text("\n\n".join(instructions), encoding="utf-8")
