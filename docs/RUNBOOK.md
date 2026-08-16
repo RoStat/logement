@@ -42,6 +42,9 @@ python -m src.ingest.dpe --all
 # Référentiel géographique
 python -m src.ingest.geo
 
+# Table de rattachement des communes fusionnées
+python -m src.ingest.communes_historiques --departement 69
+
 # Aides
 python -m src.ingest.aides
 ```

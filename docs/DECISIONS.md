@@ -126,3 +126,55 @@ et lève une erreur sinon — tout filtre ajouté sans instrumentation sera dét
 
 Le taux de rétention est par ailleurs recalculé sur les totaux cumulés : il était
 sommé d'une année sur l'autre et atteignait 155,6 %.
+
+## 2026-08-16 — Détection multi-lots portée sur le fichier brut
+
+**Constat** : la détection tournait sur le sous-ensemble déjà filtré. Mesuré sur
+le 69 en 2023 : 78 mutations multi-lots détectées sur 4 344 réellement présentes,
+2 300 devenues invisibles, 2 943 lignes conservées à tort (11,8 % des retenues).
+La valeur foncière couvrant l'ensemble des lots, ces lignes portaient un prix au
+m² surévalué.
+
+**Choix** : la détection porte sur le fichier brut. Le caractère multi-lots est
+une propriété de la mutation telle qu'enregistrée, pas du reliquat qui survit aux
+filtres. Effet : 21 486 lignes écartées contre 2 039, rétention à 25,9 %.
+
+## 2026-08-16 — Rattachement des communes fusionnées
+
+**Constat** : le COG courant classe les communes absorbées en `COMD` (déléguées)
+et `COMA` (associées), sans département ni région. DVF et DPE portent
+l'historique sous ces anciens codes. Sur le seul département 69, 580 ventes et
+1 599 DPE devenaient orphelins et faisaient échouer le contrôle « toute commune a
+un département ». La France compte 2 105 communes déléguées.
+
+**Choix** : rattacher l'historique à la commune actuelle — les ventes de
+Pierre-Bénite remontent sur la page Oullins-Pierre-Bénite, là où l'utilisateur
+les cherchera.
+
+**Mise en œuvre** : un script distinct, `src/ingest/communes_historiques.py`,
+produit la table de rattachement ; `geo.py`, validé, reste inchangé. La
+résolution est transitive, une commune déléguée pouvant pointer vers une commune
+elle-même absorbée par une fusion ultérieure.
+
+## 2026-08-16 — STOP-1 : mutations à plusieurs lignes sur une même parcelle
+
+**Constat, non corrigé à ce stade.** 18,5 % des lignes retenues appartiennent à
+des mutations portant plusieurs lignes sur **une même parcelle** — un appartement
+et ses annexes, ou plusieurs lots d'un même bien. La règle multi-lots, fondée sur
+le décompte de parcelles distinctes, ne les voit pas.
+
+Chaque ligne porte la valeur foncière **totale** de la mutation. Conséquences :
+la vente est comptée plusieurs fois dans `nb_ventes`, et le prix au m² est calculé
+en divisant le prix total par la surface d'un seul lot.
+
+Exemple relevé : mutation `2021-1163098`, 947 230 € répétés sur 4 lignes de 60,
+150, 150 et 60 m².
+
+**Ampleur mesurée sur le 69** : 8 506 doublons stricts ; 105 691 mutations réelles
+pour 119 745 lignes. Prix au m² médian 3 990 € contre 3 871 € après regroupement
+par mutation, soit une surestimation systématique atteignant 12 % sur les communes
+à grosses ventes multi-lots (Saint-Didier-au-Mont-d'Or : 6 365 € → 5 591 €).
+
+**Arbitrage attendu** : passer l'unité d'observation de la ligne à la mutation
+change le sens de `nb_ventes` et déplace de nouveau le taux de rétention, qui est
+un critère de validation.

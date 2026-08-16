@@ -33,6 +33,10 @@ REQUIRED_INPUTS = (
     ("dvf/*.parquet", "python -m src.ingest.dvf --departement 69"),
     ("dpe/*.parquet", "python -m src.ingest.dpe --departement 69"),
     ("communes.parquet", "python -m src.ingest.geo"),
+    (
+        "communes_historiques.parquet",
+        "python -m src.ingest.communes_historiques --departement 69",
+    ),
 )
 
 
@@ -85,6 +89,30 @@ def build(departement: str | None = None) -> None:
         )
         n_communes = con.execute("SELECT COUNT(*) FROM communes").fetchone()[0]
         logger.info("Communes chargé : %d lignes", n_communes)
+
+        hist_path = str(PARQUET_DIR / "communes_historiques.parquet")
+        con.execute(f"CREATE TABLE communes_historiques AS SELECT * FROM '{hist_path}'")
+
+    with timed_operation(logger, "Rattachement des communes fusionnées"):
+        # DVF et DPE portent l'historique sous les anciens codes INSEE des
+        # communes déléguées. Sans ce rattachement, ces lignes n'ont plus de
+        # commune d'accueil et le contrôle « toute commune a un département »
+        # échoue — 580 ventes et 1 599 DPE sur le seul département 69.
+        for table, colonne in (("dvf", "code_commune"), ("dpe", "code_insee")):
+            n_avant = con.execute(
+                f"SELECT COUNT(*) FROM {table} t "
+                "JOIN communes_historiques h "
+                f"ON t.{colonne} = h.code_insee_historique"
+            ).fetchone()[0]
+            con.execute(
+                f"UPDATE {table} SET {colonne} = ("
+                "  SELECT h.code_insee FROM communes_historiques h"
+                f"  WHERE h.code_insee_historique = {table}.{colonne}"
+                f") WHERE {colonne} IN ("
+                "  SELECT code_insee_historique FROM communes_historiques"
+                ")"
+            )
+            logger.info("  %s : %d lignes rattachées", table, n_avant)
 
     if departement:
         con.execute(

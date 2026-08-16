@@ -21,6 +21,7 @@ def _create_all(root: Path) -> None:
     (root / "dvf" / "dvf_2023.parquet").touch()
     (root / "dpe" / "dpe_dep69.parquet").touch()
     (root / "communes.parquet").touch()
+    (root / "communes_historiques.parquet").touch()
 
 
 class TestCheckInputs:
@@ -39,7 +40,7 @@ class TestCheckInputs:
         message = str(exc.value)
         assert "dpe" in message
         assert "python -m src.ingest.dpe" in message, "la commande à lancer doit être citée"
-        assert "1 sur 3" in message
+        assert f"1 sur {len(REQUIRED_INPUTS)}" in message
 
     def test_signale_les_communes_manquantes(self, parquet_dir: Path) -> None:
         _create_all(parquet_dir)
@@ -54,7 +55,7 @@ class TestCheckInputs:
             check_inputs()
 
         message = str(exc.value)
-        assert "3 sur 3" in message
+        assert f"{len(REQUIRED_INPUTS)} sur {len(REQUIRED_INPUTS)}" in message
         for _, commande in REQUIRED_INPUTS:
             assert commande in message
 
@@ -69,3 +70,15 @@ class TestCheckInputs:
     def test_chaque_entree_a_une_commande(self) -> None:
         for motif, commande in REQUIRED_INPUTS:
             assert motif and commande.startswith("python -m src.ingest.")
+
+
+class TestRattachementRequis:
+    def test_table_de_rattachement_est_une_entree_requise(self) -> None:
+        """Sans elle, les codes de communes fusionnées restent orphelins et le
+        contrôle « toute commune a un département » échoue."""
+        motifs = [motif for motif, _ in REQUIRED_INPUTS]
+        assert "communes_historiques.parquet" in motifs
+
+    def test_commande_de_production_citee(self) -> None:
+        commandes = dict(REQUIRED_INPUTS)
+        assert "communes_historiques" in commandes["communes_historiques.parquet"]
