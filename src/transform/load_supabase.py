@@ -42,6 +42,7 @@ TABLES = [
     "agg_commune_croisement",
     "agg_voie_immo",
     "fibre",
+    "loyers",
 ]
 
 # Nombre de lignes par instruction INSERT. Assez grand pour limiter les
@@ -87,7 +88,8 @@ def charger_tables(departement: str) -> dict[str, pd.DataFrame]:
     ]]
 
     tables = {"communes": communes}
-    for nom in TABLES[1:-1]:
+    for nom in ("agg_commune_immo", "agg_commune_prix", "agg_commune_dpe",
+                "agg_commune_croisement", "agg_voie_immo"):
         tables[nom] = pd.read_sql(f"SELECT * FROM {nom}", con)
     con.close()
 
@@ -97,6 +99,12 @@ def charger_tables(departement: str) -> dict[str, pd.DataFrame]:
     # communes : sans ce filtre, la clé étrangère refuserait le lot entier.
     tables["fibre"] = fibre[fibre["code_insee"].isin(connues)][[
         "code_insee", "locaux", "locaux_ftth", "taux_fibre_pct", "population", "millesime",
+    ]]
+
+    loyers = pd.read_parquet(PARQUET_DIR / "loyers.parquet")
+    tables["loyers"] = loyers[loyers["code_insee"].isin(connues)][[
+        "code_insee", "categorie", "loyer_m2", "borne_basse", "borne_haute",
+        "estimation_locale", "nb_annonces", "millesime",
     ]]
 
     return tables
