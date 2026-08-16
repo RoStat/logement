@@ -340,3 +340,46 @@ indiscernables.
 donnée n'est pas une valeur faible : elle appelle un canal catégoriquement
 différent, pas une nuance sur la même échelle. Le témoin de légende reprend le
 motif.
+
+## 2026-08-16 — Postgres : schéma et politique d'accès
+
+**Schéma** : les sept tables reprennent les agrégats, avec des clés primaires
+composées et des clés étrangères vers `communes`. L'éligibilité devient une
+colonne booléenne plutôt qu'une table séparée — en Postgres, un index partiel
+sur ce booléen fait le même travail.
+
+**Lecture publique** : toutes les données proviennent de sources ouvertes. RLS
+est activé sur chaque table avec une politique de sélection pour `anon` et
+`authenticated` ; l'écriture reste réservée au rôle de service utilisé par
+l'ingestion.
+
+**Chargement idempotent** : chaque table est vidée puis réécrite dans une
+transaction unique. Un échec en cours de route laisse la base dans son état
+précédent plutôt qu'à moitié remplie.
+
+**Le millésime ARCEP et le COG ne recensent pas les mêmes communes** — 274 contre
+275. Le chargement filtre donc la table fibre sur les communes connues, faute de
+quoi la clé étrangère refuserait le lot entier.
+
+**Point de vigilance** : le projet Supabase héberge déjà une autre application
+(`capsules`, `profiles`, `friendships`, `taches`…). Les tables du logement
+cohabitent dans le schéma `public` sans collision de noms aujourd'hui, mais elles
+partagent le quota de l'offre gratuite. Un schéma dédié `logement` isolerait
+proprement les deux applications ; ce n'est pas fait à ce stade.
+
+## 2026-08-16 — Intégration continue
+
+Deux workflows plutôt qu'un : les contrôles doivent être rapides et tourner à
+chaque poussée, l'ingestion est longue et n'a de sens que périodiquement.
+
+`ci.yml` annule la vérification précédente d'une même branche à chaque nouvelle
+poussée — seul le dernier état importe.
+
+`donnees.yml` va au bout même sans le secret `SUPABASE_DB_URL` : il produit alors
+le script SQL au lieu de se connecter. La chaîne reste ainsi vérifiable sur un
+dépôt fraîchement cloné, sans qu'un secret manquant ne se traduise par un échec
+opaque.
+
+`pyshp` et `shapely` sont passées en dépendances principales : `fibre.py` en
+dépend et fait partie de la chaîne standard. Les laisser en extra aurait produit
+une CI verte en local et rouge en intégration.

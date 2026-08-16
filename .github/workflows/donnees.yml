@@ -1,0 +1,79 @@
+name: Rafraîchissement des données
+
+# Les sources sont mises à jour à des rythmes différents — DVF plusieurs fois
+# par an, l'ARCEP chaque trimestre, le COG chaque janvier. Un passage mensuel
+# couvre l'ensemble sans les solliciter inutilement.
+on:
+  schedule:
+    - cron: "0 4 3 * *"
+  workflow_dispatch:
+    inputs:
+      departement:
+        description: "Département à ingérer"
+        required: true
+        default: "69"
+
+jobs:
+  ingestion:
+    name: Ingérer, transformer, charger
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      DEPARTEMENT: ${{ github.event.inputs.departement || '69' }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Installer les dépendances
+        run: pip install -e ".[dev,postgres]"
+
+      - name: Référentiel géographique
+        run: python -m src.ingest.geo --departement "$DEPARTEMENT"
+
+      - name: Communes fusionnées
+        run: python -m src.ingest.communes_historiques --departement "$DEPARTEMENT"
+
+      - name: Transactions immobilières
+        run: python -m src.ingest.dvf --departement "$DEPARTEMENT"
+
+      - name: Diagnostics énergétiques
+        run: python -m src.ingest.dpe --departement "$DEPARTEMENT"
+
+      - name: Déploiement fibre
+        run: python -m src.ingest.fibre --departement "$DEPARTEMENT"
+
+      - name: Rapprochement DVF / DPE
+        run: python -m src.transform.rapprochement --departement "$DEPARTEMENT"
+
+      - name: Agrégats et contrôles qualité
+        run: python -m src.transform.build_aggregates --departement "$DEPARTEMENT"
+
+      - name: Export du site
+        run: python -m src.transform.export_web --departement "$DEPARTEMENT"
+
+      - name: Charger dans Supabase
+        # Sans le secret, on produit le script sans se connecter : la chaîne
+        # reste vérifiable de bout en bout sur un dépôt fraîchement cloné.
+        run: |
+          if [ -n "$SUPABASE_DB_URL" ]; then
+            python -m src.transform.load_supabase --departement "$DEPARTEMENT"
+          else
+            echo "::warning::SUPABASE_DB_URL absent — chargement ignoré."
+            python -m src.transform.load_supabase --departement "$DEPARTEMENT" --sql /tmp/charge.sql
+          fi
+
+      - name: Conserver les données produites
+        uses: actions/upload-artifact@v4
+        with:
+          name: donnees-${{ env.DEPARTEMENT }}
+          path: |
+            data/logement.db
+            data/parquet/web_*.json
+          retention-days: 14

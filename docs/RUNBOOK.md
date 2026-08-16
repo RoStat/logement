@@ -82,3 +82,36 @@ git checkout <commit> -- data/
 - Workers : limite de 100 000 requêtes/jour sur l'offre gratuite
 - Seuil d'alerte : 60 000 requêtes/jour
 - Action : passer à l'offre payante Workers ($5/mois) ou activer la mise en cache agressive
+
+## Chargement dans Supabase
+
+Le schéma est créé par migration ; le chargement lit la base SQLite produite par
+la transformation et réécrit chaque table dans une transaction unique.
+
+```bash
+# Renseigner d'abord SUPABASE_DB_URL (Réglages > Database > Connection string)
+export SUPABASE_DB_URL='postgresql://postgres:...@db.<projet>.supabase.co:5432/postgres'
+python -m src.transform.load_supabase --departement 69
+
+# Sans connexion : produire le script pour relecture
+python -m src.transform.load_supabase --departement 69 --sql charge.sql
+```
+
+Le chargement est idempotent : chaque table est vidée puis réécrite. Un échec en
+cours de route laisse la base dans son état précédent.
+
+## Intégration continue
+
+| Workflow | Déclenchement | Rôle |
+|---|---|---|
+| `ci.yml` | chaque poussée et chaque demande de fusion | `ruff` puis `pytest` |
+| `donnees.yml` | le 3 de chaque mois, ou à la demande | chaîne complète d'ingestion, agrégats, export et chargement |
+
+`donnees.yml` demande le secret `SUPABASE_DB_URL` dans les réglages du dépôt
+(*Settings > Secrets and variables > Actions*). Sans lui, le workflow va tout de
+même au bout et produit le script SQL, ce qui garde la chaîne vérifiable sur un
+dépôt fraîchement cloné.
+
+Les sources sont mises à jour à des rythmes différents — DVF plusieurs fois par
+an, l'ARCEP chaque trimestre, le COG chaque janvier. Un passage mensuel les
+couvre sans les solliciter inutilement.

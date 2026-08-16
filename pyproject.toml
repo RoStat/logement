@@ -11,14 +11,22 @@ dependencies = [
     "duckdb>=1.0",
     "requests>=2.31",
     "pandas>=2.1",
+    "numpy>=1.26",
     "pyarrow>=14.0",
     "python-dotenv>=1.0",
+    # Lecture du shapefile ARCEP, qui porte à la fois les données fibre et les
+    # contours de la carte : la chaîne standard en dépend.
+    "pyshp>=2.3",
+    "shapely>=2.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "ruff>=0.4",
     "pytest>=8.0",
+]
+postgres = [
+    "psycopg[binary]>=3.1",
 ]
 
 [tool.setuptools.packages.find]
