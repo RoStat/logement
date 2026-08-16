@@ -27,6 +27,9 @@ python -m src.ingest.dvf --departement 69
 # DVF — France entière
 python -m src.ingest.dvf --all
 
+# DPE — lister les champs exposés par le jeu de données
+python -m src.ingest.dpe --schema
+
 # DPE — code postal (développement)
 python -m src.ingest.dpe --code-postal 69100
 

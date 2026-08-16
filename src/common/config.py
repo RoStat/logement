@@ -18,7 +18,7 @@ PARQUET_DIR = DATA_DIR / "parquet"
 DB_PATH = DATA_DIR / "logement.db"
 
 DVF_BASE_URL = "https://files.data.gouv.fr/geo-dvf/latest/csv"
-DPE_API_URL = "https://data.ademe.fr/data-fair/api/v1/datasets/dpe-v2-logements-existants/lines"
+DPE_API_URL = "https://data.ademe.fr/data-fair/api/v1/datasets/dpe03existant/lines"
 BAN_GEOCODE_URL = "https://api-adresse.data.gouv.fr"
 BAN_DATA_URL = "https://adresse.data.gouv.fr/data/ban"
 

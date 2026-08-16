@@ -4,6 +4,7 @@ Télécharge les DPE via l'API data.ademe.fr avec pagination par curseur,
 limitation de débit à 5 req/s, et reprise sur incident.
 
 Usage :
+    python -m src.ingest.dpe --schema          # lister les champs disponibles
     python -m src.ingest.dpe --code-postal 69100
     python -m src.ingest.dpe --departement 69
     python -m src.ingest.dpe --all
@@ -22,50 +23,71 @@ from src.common.storage import write_parquet
 
 logger = get_logger("ingest.dpe")
 
+# Schéma du jeu `dpe03existant` — noms de champs confirmés par appel réel.
+# L'ancien jeu `dpe-v2-logements-existants` renvoie 404 et ses noms de champs
+# accentués et parenthésés n'ont plus cours.
 SELECT_COLUMNS = [
-    "N°DPE",
-    "Code_postal_(BAN)",
-    "Code_INSEE_(BAN)",
-    "Adresse_(BAN)",
-    "Etiquette_DPE",
-    "Etiquette_GES",
-    "Conso_5_usages_é_finale",
-    "Surface_habitable_logement",
-    "Année_construction",
-    "Date_établissement_DPE",
-    "Coordonnée_cartographique_X_(BAN)",
-    "Coordonnée_cartographique_Y_(BAN)",
+    "numero_dpe",
+    "identifiant_ban",
+    "code_insee_ban",
+    "code_departement_ban",
+    "code_postal_ban",
+    "nom_commune_ban",
+    "nom_rue_ban",
+    "numero_voie_ban",
+    "adresse_ban",
+    "etiquette_dpe",
+    "etiquette_ges",
+    "conso_5_usages_par_m2_ep",
+    "date_etablissement_dpe",
+    "periode_construction",
+    "type_batiment",
+    "statut_geocodage",
+    "score_ban",
+    "_geopoint",
 ]
 
 COLUMN_RENAME = {
-    "N°DPE": "numero_dpe",
-    "Code_postal_(BAN)": "code_postal",
-    "Code_INSEE_(BAN)": "code_insee",
-    "Adresse_(BAN)": "adresse",
-    "Etiquette_DPE": "classe_dpe",
-    "Etiquette_GES": "classe_ges",
-    "Conso_5_usages_é_finale": "conso_energie",
-    "Surface_habitable_logement": "surface_habitable",
-    "Année_construction": "annee_construction",
-    "Date_établissement_DPE": "date_etablissement",
-    "Coordonnée_cartographique_X_(BAN)": "longitude",
-    "Coordonnée_cartographique_Y_(BAN)": "latitude",
+    "numero_dpe": "numero_dpe",
+    "identifiant_ban": "identifiant_ban",
+    "code_insee_ban": "code_insee",
+    "code_departement_ban": "code_departement",
+    "code_postal_ban": "code_postal",
+    "nom_commune_ban": "nom_commune",
+    "nom_rue_ban": "nom_rue",
+    "numero_voie_ban": "numero_voie",
+    "adresse_ban": "adresse",
+    "etiquette_dpe": "classe_dpe",
+    "etiquette_ges": "classe_ges",
+    "conso_5_usages_par_m2_ep": "conso_energie",
+    "date_etablissement_dpe": "date_etablissement",
+    "periode_construction": "periode_construction",
+    "type_batiment": "type_batiment",
+    "statut_geocodage": "statut_geocodage",
+    "score_ban": "score_ban",
+    "_geopoint": "geopoint",
 }
 
-# Caracteres reserves par la syntaxe query_string d'Elasticsearch, utilisee par
-# le parametre `qs` de data-fair. Les noms de champs de l'API ADEME comportent
-# des parentheses : sans echappement elles sont interpretees comme un
-# groupement et le filtre est silencieusement ignore (toute la France est
-# alors telechargee).
-QS_SPECIAL_CHARS = set(r'+-=&|><!(){}[]^"~*?:\/')
+# Colonnes à convertir en numérique après renommage.
+NUMERIC_COLUMNS = ["conso_energie", "score_ban"]
 
-FIELD_CODE_POSTAL = "Code_postal_(BAN)"
-FIELD_CODE_INSEE = "Code_INSEE_(BAN)"
+# Champ de filtrage : le jeu expose directement le département, il n'y a donc
+# aucune raison de le déduire d'un préfixe de code INSEE.
+FIELD_CODE_POSTAL = "code_postal_ban"
+FIELD_CODE_DEPARTEMENT = "code_departement_ban"
+
+SCHEMA_URL = DPE_API_URL.rsplit("/", 1)[0] + "/schema"
 
 
-def escape_qs(value: str) -> str:
-    """Echappe les caracteres reserves de la syntaxe query_string."""
-    return "".join("\\" + c if c in QS_SPECIAL_CHARS else c for c in value)
+def fetch_schema(session: requests.Session) -> list[dict]:
+    """Récupère le schéma du jeu de données ADEME.
+
+    Sert à vérifier les noms de champs disponibles sans lancer d'ingestion :
+    l'identifiant du jeu et ses champs ont déjà changé une fois.
+    """
+    resp = session.get(SCHEMA_URL, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
 
 
 def build_query_params(
@@ -73,16 +95,10 @@ def build_query_params(
     departement: str | None = None,
     cursor: str | None = None,
 ) -> dict[str, str | int]:
-    """Construit les parametres d'une requete de page a l'API ADEME.
-
-    Le filtre departement s'appuie sur le code INSEE et non sur le code postal :
-    le prefixe du code INSEE communal designe le departement de facon fiable
-    (69xxx = Rhone), ce qui n'est pas vrai des codes postaux, dont le prefixe
-    deborde sur les departements voisins.
-    """
+    """Construit les paramètres d'une requête de page à l'API ADEME."""
     if code_postal and departement:
         raise ValueError(
-            "Filtres incompatibles : preciser --code-postal ou --departement, pas les deux."
+            "Filtres incompatibles : préciser --code-postal ou --departement, pas les deux."
         )
 
     params: dict[str, str | int] = {
@@ -91,10 +107,9 @@ def build_query_params(
     }
 
     if code_postal:
-        params["qs"] = f"{escape_qs(FIELD_CODE_POSTAL)}:{escape_qs(code_postal)}"
+        params["qs"] = f"{FIELD_CODE_POSTAL}:{code_postal}"
     elif departement:
-        # Le `*` final est volontairement laisse non echappe : c'est le joker.
-        params["qs"] = f"{escape_qs(FIELD_CODE_INSEE)}:{escape_qs(departement)}*"
+        params["qs"] = f"{FIELD_CODE_DEPARTEMENT}:{departement}"
 
     if cursor:
         params["after"] = cursor
@@ -236,10 +251,8 @@ def run_ingestion(
 
     df = df.rename(columns=COLUMN_RENAME)
 
-    for col in ["conso_energie", "surface_habitable"]:
+    for col in NUMERIC_COLUMNS:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    for col in ["annee_construction"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
 
     suffix = code_postal or (f"dep{departement}" if departement else "full")
     out_path = PARQUET_DIR / "dpe" / f"dpe_{suffix}.parquet"
@@ -257,15 +270,39 @@ def run_ingestion(
         logger.info("    - %s", col)
 
 
+def report_schema() -> None:
+    """Affiche les champs exposés par le jeu et signale ceux non sélectionnés."""
+    session = requests.Session()
+    schema = fetch_schema(session)
+    champs = sorted(f.get("key", "") for f in schema)
+
+    logger.info("=== SCHÉMA %s ===", SCHEMA_URL)
+    logger.info("  %d champs exposés", len(champs))
+    for champ in champs:
+        marque = "*" if champ in SELECT_COLUMNS else " "
+        logger.info("  %s %s", marque, champ)
+
+    manquants = [c for c in SELECT_COLUMNS if c not in champs]
+    if manquants:
+        logger.error("Champs sélectionnés absents du schéma : %s", manquants)
+
+    surfaces = [c for c in champs if "surface" in c.lower()]
+    logger.info("  Champs de surface disponibles : %s", surfaces or "aucun")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ingestion DPE logements existants (ADEME)")
     perimetre = parser.add_mutually_exclusive_group(required=True)
+    perimetre.add_argument(
+        "--schema", action="store_true",
+        help="Afficher les champs du jeu de données et quitter",
+    )
     perimetre.add_argument(
         "--code-postal", type=str, default=None, help="Code postal (dev)",
     )
     perimetre.add_argument(
         "--departement", type=str, default=None,
-        help="Département, filtré sur le préfixe du code INSEE (ex: 69)",
+        help="Département, filtré sur code_departement_ban (ex: 69)",
     )
     perimetre.add_argument(
         "--all", action="store_true", help="Télécharger tous les DPE",
@@ -274,6 +311,10 @@ def main() -> None:
         "--resume", action="store_true", help="Reprendre depuis le curseur",
     )
     args = parser.parse_args()
+
+    if args.schema:
+        report_schema()
+        return
 
     run_ingestion(
         code_postal=args.code_postal,

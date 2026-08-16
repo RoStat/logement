@@ -45,6 +45,19 @@ EXPECTED_COLUMNS = {
 
 VALID_TYPES_LOCAL = {"Maison", "Appartement"}
 
+# DVF compte une ligne par lot et non par vente : le seul filtre type_local
+# retire déjà ~58 % du brut (267 716 lignes sur 462 796 pour le 69). La plage
+# 40–70 % initialement retenue ne correspondait donc à aucune réalité.
+RETENTION_MIN_PCT = 25
+RETENTION_MAX_PCT = 40
+
+
+def retention_pct(retenues: int, brutes: int) -> float:
+    """Taux de rétention en pourcentage, borné par construction à [0, 100]."""
+    if brutes <= 0:
+        return 0.0
+    return round(100 * retenues / brutes, 1)
+
 
 def discover_available_years(session: requests.Session) -> list[int]:
     """Liste les années disponibles en interrogeant le répertoire distant."""
@@ -119,6 +132,32 @@ def validate_schema(df: pd.DataFrame) -> None:
         )
 
 
+# Compteurs d'exclusion exprimés en lignes. Leur somme, augmentée des lignes
+# retenues, doit reconstituer exactement le volume brut : c'est ce qui garantit
+# qu'aucun filtre n'est laissé sans instrumentation.
+EXCLUSION_KEYS = (
+    "exclues_non_vente",
+    "exclues_type_local",
+    "exclues_prix_manquant",
+    "exclues_surface_faible",
+    "exclues_multi_lots",
+)
+
+
+def check_balance(stats: dict[str, int]) -> None:
+    """Vérifie que exclusions + retenues = brut. Lève RuntimeError sinon."""
+    total = sum(stats[k] for k in EXCLUSION_KEYS) + stats["lignes_retenues"]
+    brut = stats["lignes_brutes"]
+    if total != brut:
+        detail = ", ".join(f"{k}={stats[k]}" for k in EXCLUSION_KEYS)
+        raise RuntimeError(
+            f"Bilan des filtres DVF incohérent : {total} comptabilisées pour "
+            f"{brut} lignes brutes (écart {brut - total}). "
+            f"Un filtre n'est pas instrumenté. Détail : {detail}, "
+            f"lignes_retenues={stats['lignes_retenues']}"
+        )
+
+
 def filter_dvf(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
     """Applique les filtres du cahier des charges et retourne (df filtré, stats)."""
     n_raw = len(df)
@@ -142,9 +181,14 @@ def filter_dvf(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
         .reset_index()
     )
     multi_lots = multi_lots[multi_lots["id_parcelle"] > 1]["id_mutation"]
-    n_multi = len(multi_lots)
+    n_mutations_multi = len(multi_lots)
 
-    df_filtered = df_filtered[~df_filtered["id_mutation"].isin(multi_lots)]
+    # Une mutation multi-lots porte plusieurs lignes : compter les mutations
+    # sous-estimait l'exclusion et déséquilibrait le bilan.
+    mask_multi = df_filtered["id_mutation"].isin(multi_lots)
+    n_lignes_multi = int(mask_multi.sum())
+
+    df_filtered = df_filtered[~mask_multi]
 
     n_retained = len(df_filtered)
 
@@ -160,10 +204,13 @@ def filter_dvf(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
             (mask_vente & mask_type & mask_prix).sum()
             - (mask_vente & mask_type & mask_prix & mask_surface).sum()
         ),
-        "exclues_multi_lots": n_multi,
+        "exclues_multi_lots": n_lignes_multi,
         "lignes_retenues": n_retained,
-        "taux_retention_pct": round(100 * n_retained / n_raw, 1) if n_raw > 0 else 0,
+        "mutations_multi_lots": n_mutations_multi,
+        "taux_retention_pct": retention_pct(n_retained, n_raw),
     }
+
+    check_balance(stats)
 
     return df_filtered, stats
 
@@ -199,7 +246,11 @@ def run_ingestion(
             validate_schema(df)
             df_clean, stats = filter_dvf(df)
 
+            # taux_retention_pct est un ratio : le cumuler n'a pas de sens
+            # (il atteignait 155,6 % sur 5 années). Recalculé sur les totaux.
             for k, v in stats.items():
+                if k == "taux_retention_pct":
+                    continue
                 total_stats[k] = total_stats.get(k, 0) + v
 
             out_path = PARQUET_DIR / "dvf" / f"dvf_{annee}.parquet"
@@ -210,21 +261,24 @@ def run_ingestion(
                 stats["taux_retention_pct"],
             )
 
+    if total_stats:
+        total_stats["taux_retention_pct"] = retention_pct(
+            total_stats.get("lignes_retenues", 0), total_stats.get("lignes_brutes", 0),
+        )
+        check_balance(total_stats)
+
     logger.info("=== RAPPORT DVF ===")
     for k, v in total_stats.items():
         logger.info("  %-30s %s", k, v)
 
-    n_years = len(years)
-    if n_years > 0:
-        n_ret = total_stats.get("lignes_retenues", 0)
-        n_brut = max(total_stats.get("lignes_brutes", 1), 1)
-        avg_retention = round(100 * n_ret / n_brut, 1)
-        logger.info("  Taux de rétention global : %.1f%%", avg_retention)
-        if avg_retention < 40 or avg_retention > 70:
+    if total_stats:
+        taux = total_stats["taux_retention_pct"]
+        logger.info("  Taux de rétention global : %.1f%%", taux)
+        if not RETENTION_MIN_PCT <= taux <= RETENTION_MAX_PCT:
             logger.warning(
-                "ATTENTION : taux de rétention (%.1f%%) hors de la plage attendue (40–70%%). "
-                "Investiguer avant de poursuivre.",
-                avg_retention,
+                "ATTENTION : taux de rétention (%.1f%%) hors de la plage attendue "
+                "(%d–%d%%). Investiguer avant de poursuivre.",
+                taux, RETENTION_MIN_PCT, RETENTION_MAX_PCT,
             )
 
 

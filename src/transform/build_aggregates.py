@@ -28,7 +28,44 @@ logger = get_logger("transform.aggregates")
 SQL_DIR = Path(__file__).resolve().parent.parent.parent / "sql"
 
 
+# Jeux de données requis par la transformation, avec la commande qui les produit.
+REQUIRED_INPUTS = (
+    ("dvf/*.parquet", "python -m src.ingest.dvf --departement 69"),
+    ("dpe/*.parquet", "python -m src.ingest.dpe --departement 69"),
+    ("communes.parquet", "python -m src.ingest.geo"),
+)
+
+
+def check_inputs() -> None:
+    """Vérifie la présence des Parquet d'entrée avant d'ouvrir DuckDB.
+
+    Sans ce contrôle, un fichier absent remonte sous forme d'IOException DuckDB
+    brute, qui ne nomme ni le lot en cause ni la commande à lancer.
+    """
+    manquants = []
+    for motif, commande in REQUIRED_INPUTS:
+        chemin = PARQUET_DIR / motif
+        present = (
+            any(chemin.parent.glob(chemin.name)) if "*" in motif else chemin.exists()
+        )
+        if not present:
+            manquants.append((chemin, commande))
+
+    if manquants:
+        lignes = [
+            f"  - {chemin}  →  {commande}" for chemin, commande in manquants
+        ]
+        raise RuntimeError(
+            "Données d'entrée manquantes ("
+            f"{len(manquants)} sur {len(REQUIRED_INPUTS)}) :\n"
+            + "\n".join(lignes)
+            + "\n\nLancer la ou les commandes ci-dessus avant la transformation."
+        )
+
+
 def build(departement: str | None = None) -> None:
+    check_inputs()
+
     con = duckdb.connect()
 
     with timed_operation(logger, "Chargement des Parquet"):
@@ -163,6 +200,13 @@ def main() -> None:
         help="Filtrer sur un département",
     )
     args = parser.parse_args()
+
+    try:
+        check_inputs()
+    except RuntimeError as e:
+        # Erreur d'exploitation, pas un bogue : message net plutôt que traceback.
+        logger.error("%s", e)
+        raise SystemExit(1) from None
 
     with timed_operation(logger, "Build agrégats complet"):
         build(departement=args.departement)

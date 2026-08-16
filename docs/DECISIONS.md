@@ -41,31 +41,24 @@
 
 **Note** : les scripts découvrent dynamiquement les fichiers réels (années DVF, millésime COG) et valident le schéma à l'exécution. Les URL de base sont stables mais les chemins exacts des fichiers évoluent.
 
-## 2026-08-15 — Échappement des filtres de l'API ADEME
+## 2026-08-15 — Échappement des filtres de l'API ADEME *(annulée le 2026-08-16)*
 
-**Problème** : le paramètre `qs` de data-fair est interprété avec la syntaxe
-`query_string` d'Elasticsearch. Les noms de champs de l'API ADEME comportent des
-parenthèses (`Code_postal_(BAN)`), qui y sont des opérateurs de groupement. Le
-filtre était injecté sans échappement.
+Un échappement `escape_qs()` des caractères réservés `query_string` avait été
+ajouté, au motif que les noms de champs comportaient des parenthèses.
 
-**Conséquence** : le filtre est ignoré silencieusement — l'ingestion « code
-postal 69001 » aurait téléchargé la France entière sans message d'erreur.
+**Annulée** : l'appel réel montre que le jeu `dpe03existant` expose des champs en
+minuscules avec tirets bas, sans parenthèses ni accents. Le correctif traitait un
+problème inexistant et a été retiré. Conservé au journal comme rappel : ne pas
+inférer un schéma d'API sans l'avoir interrogé.
 
-**Choix** : échapper les caractères réservés via `escape_qs()`, et centraliser la
-construction des paramètres dans `build_query_params()`, testée hors ligne.
+## 2026-08-15 — Filtre départemental du DPE *(révisée le 2026-08-16)*
 
-**Reste à vérifier en conditions réelles** : la syntaxe exacte acceptée par
-data-fair n'a pas pu être confirmée (accès réseau aux sources bloqué dans
-l'environnement de développement distant). À valider au premier appel réel en
-comparant le nombre de lignes retournées au périmètre demandé.
+Le filtre s'appuyait sur un préfixe de code INSEE avec joker (`code_insee:69*`),
+faute de champ département supposé disponible.
 
-## 2026-08-15 — Filtre départemental du DPE : code INSEE et non code postal
-
-**Options** : filtrer sur le préfixe du code postal, ou sur celui du code INSEE
-**Choix** : code INSEE (`Code_INSEE_(BAN):69*`)
-**Raison** : le préfixe du code INSEE communal désigne le département de façon
-fiable. Le préfixe du code postal, lui, déborde sur les départements voisins
-(zones de distribution postale), ce qui produirait un périmètre inexact.
+**Révisé** : le jeu `dpe03existant` expose directement `code_departement_ban`. Le
+filtre porte désormais sur ce champ, en égalité stricte. Le bricolage de préfixe
+et le cas particulier corse sont supprimés.
 
 ## 2026-08-15 — Fragilité des contrôles qualité face aux valeurs aberrantes
 
@@ -81,3 +74,48 @@ n'exclut que `valeur_fonciere <= 0`.
 prix au m² implausibles dès l'ingestion (préserve le caractère bloquant du
 contrôle, mais modifie le taux de rétention, qui est un critère de validation),
 ou rendre le contrôle non bloquant au profit d'un rapport d'anomalies.
+
+## 2026-08-16 — Migration vers le jeu `dpe03existant`
+
+**Constat** : l'identifiant `dpe-v2-logements-existants` renvoie 404. Le jeu
+courant est `dpe03existant`, dont les champs sont en minuscules avec tirets bas.
+
+**Conséquences sur le schéma interne** :
+- `conso_energie` provient désormais de `conso_5_usages_par_m2_ep`, exprimée en
+  **kWh/m²/an d'énergie primaire**, là où l'ancien champ portait une consommation
+  totale en énergie finale. `sql/agg_commune_dpe.sql` en calcule la moyenne : la
+  grandeur est plus directement comparable entre logements, mais l'unité affichée
+  sur le site devra être corrigée en conséquence.
+- `annee_construction` (entier) est remplacé par `periode_construction`, une
+  tranche textuelle. Aucune conversion numérique n'est donc appliquée.
+- Les coordonnées cartographiques X/Y cèdent la place à `_geopoint`, accompagné de
+  `statut_geocodage` et `score_ban` exploitables pour filtrer la qualité du
+  géocodage lors du rapprochement DVF↔DPE.
+
+**Surface habitable** : aucun champ de surface ne figure dans la liste confirmée.
+La question reste **ouverte** — l'accès réseau aux sources est bloqué dans
+l'environnement de développement distant, le `/schema` n'a pas pu être interrogé.
+Une commande `python -m src.ingest.dpe --schema` a été ajoutée : elle liste les
+champs du jeu et signale ceux dont le nom contient « surface ».
+
+## 2026-08-16 — Plage de rétention DVF : 25–40 %
+
+**Constat** : DVF compte une ligne par **lot**, pas par vente. Sur le
+département 69, le seul filtre `type_local` retire 267 716 lignes sur 462 796,
+soit 57,8 % du brut. Mesure réelle : 462 796 → 144 074, soit 31,1 %.
+
+**Choix** : plage attendue ramenée de 40–70 % à 25–40 %.
+
+## 2026-08-16 — Bilan des filtres DVF vérifié par assertion
+
+**Constat** : `exclues_multi_lots` comptait des *mutations* et non des *lignes*.
+Une mutation multi-lots portant plusieurs lignes, 2 731 lignes du 69
+disparaissaient du bilan sans compteur.
+
+**Choix** : le compteur porte sur les lignes ; `mutations_multi_lots` est conservé
+à titre indicatif. `check_balance()` vérifie désormais que la somme des
+exclusions augmentée des lignes retenues reconstitue exactement le volume brut,
+et lève une erreur sinon — tout filtre ajouté sans instrumentation sera détecté.
+
+Le taux de rétention est par ailleurs recalculé sur les totaux cumulés : il était
+sommé d'une année sur l'autre et atteignait 155,6 %.
